@@ -1,42 +1,23 @@
 package main
 
 import (
-	"encoding/csv"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 )
 
-// parserWorker: 从 lineCh 读取行并解析
-func parserWorker(lineCh <-chan string, agg *Aggregator, totalParsed *uint64, parseErrCount *uint64) {
+type Parser interface {
+	Parse(line string) (time.Time, string, string, bool)
+}
+
+func parserWorker(lineCh <-chan string, parser Parser, agg *Aggregator, totalParsed *uint64, parseErrCount *uint64) {
 	for line := range lineCh {
-		// parse CSV line robustly using encoding/csv (handles quotes)
-		r := csv.NewReader(strings.NewReader(line))
-		r.FieldsPerRecord = -1
-		rec, err := r.Read()
-		if err != nil {
+		ts, ioType, volID, ok := parser.Parse(line)
+		if !ok {
 			atomic.AddUint64(parseErrCount, 1)
 			continue
 		}
-		if len(rec) < 5 {
-			atomic.AddUint64(parseErrCount, 1)
-			continue
-		}
-		// fields: Timestamp,Offset,Size,IOType,VolumeID
-		tsStr := strings.TrimSpace(rec[0])
-		ioType := strings.TrimSpace(rec[3])
-		volID := strings.TrimSpace(rec[4])
-
-		// parse timestamp as unix seconds
-		tsInt, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			atomic.AddUint64(parseErrCount, 1)
-			continue
-		}
-		ts := time.Unix(tsInt, 0).UTC().Local()
-
 		agg.addRecord(ts, ioType, volID)
 		atomic.AddUint64(totalParsed, 1)
 	}

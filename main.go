@@ -6,8 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	"ana/providers/alicloud"
+	"ana/providers/tencent"
 )
 
 func listGzFiles(dir string) ([]string, error) {
@@ -16,8 +20,11 @@ func listGzFiles(dir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() && filepath.Ext(path) == ".tgz" {
-			paths = append(paths, path)
+		if info.Mode().IsRegular() {
+			ext := filepath.Ext(path)
+			if ext == ".gz" || ext == ".tgz" || strings.HasSuffix(path, ".tar.gz") {
+				paths = append(paths, path)
+			}
 		}
 		return nil
 	})
@@ -32,6 +39,7 @@ func main() {
 	dir := flag.String("d", "", "directory containing .gz trace files (recursive)")
 	outDir := flag.String("o", "output", "output directory")
 	workers := flag.Int("w", 0, "number of parser workers (default: numCPU)")
+	provider := flag.String("provider", "", "trace provider: alicloud|tencent")
 	flag.Parse()
 
 	if *dir == "" {
@@ -40,6 +48,10 @@ func main() {
 	}
 	if *workers <= 0 {
 		*workers = runtime.NumCPU()
+	}
+	if strings.ToLower(*provider) != "alicloud" && strings.ToLower(*provider) != "tencent" {
+		fmt.Println("请使用 -provider 指定 alicloud 或 tencent")
+		os.Exit(1)
 	}
 
 	if err := os.MkdirAll(*outDir, 0755); err != nil {
@@ -66,12 +78,21 @@ func main() {
 	var totalParsed uint64
 	var parseErrCount uint64
 
+	// choose provider parser
+	var p Parser
+	switch strings.ToLower(*provider) {
+	case "alicloud":
+		p = alicloud.NewParser()
+	default:
+		p = tencent.NewParser()
+	}
+
 	// start workers
 	for i := 0; i < *workers; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			parserWorker(lineCh, agg, &totalParsed, &parseErrCount)
+			parserWorker(lineCh, p, agg, &totalParsed, &parseErrCount)
 		}(i)
 	}
 
