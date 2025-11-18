@@ -19,8 +19,10 @@ type Aggregator struct {
 	hourMu  sync.RWMutex
 	hourMap map[string]*CountPair // key: "01-02 15"
 
-	minuteMu  sync.RWMutex
-	minuteMap map[string]*CountPair
+	minuteMu     sync.RWMutex
+	minuteMap    map[string]*CountPair
+	minuteVolMu  sync.RWMutex
+	minuteVolMap map[string]map[string]*CountPair // key: "01-02 15:04" -> VolumeID -> CountPair
 
 	volMu  sync.RWMutex
 	volMap map[string]*CountPair // key: VolumeID
@@ -28,10 +30,11 @@ type Aggregator struct {
 
 func NewAggregator() *Aggregator {
 	return &Aggregator{
-		dayMap:  make(map[string]*CountPair),
-		hourMap: make(map[string]*CountPair),
-		minuteMap: make(map[string]*CountPair),
-		volMap:  make(map[string]*CountPair),
+		dayMap:       make(map[string]*CountPair),
+		hourMap:      make(map[string]*CountPair),
+		minuteMap:    make(map[string]*CountPair),
+		minuteVolMap: make(map[string]map[string]*CountPair),
+		volMap:       make(map[string]*CountPair),
 	}
 }
 
@@ -84,6 +87,25 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
 		mcp.Writes++
 	}
 	ag.minuteMu.Unlock()
+
+	// minute-volume
+	ag.minuteVolMu.Lock()
+	mv, ok := ag.minuteVolMap[minuteKey]
+	if !ok {
+		mv = make(map[string]*CountPair)
+		ag.minuteVolMap[minuteKey] = mv
+	}
+	vmin, ok := mv[vol]
+	if !ok {
+		vmin = &CountPair{}
+		mv[vol] = vmin
+	}
+	if ioType == "0" {
+		vmin.Reads++
+	} else {
+		vmin.Writes++
+	}
+	ag.minuteVolMu.Unlock()
 
 	// volume
 	ag.volMu.Lock()

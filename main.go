@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"ana/providers/alicloud"
 	"ana/providers/tencent"
@@ -98,11 +99,31 @@ func main() {
 
 	// producer: read tar.gz and stream lines into lineCh
 	for _, p := range paths {
-		if err := streamLinesFromGzAuto(p, lineCh); err != nil {
+		prev := atomic.LoadUint64(&totalParsed) + atomic.LoadUint64(&parseErrCount)
+		cnt, err := streamLinesFromGzAuto(p, lineCh)
+		if err != nil {
 			fmt.Printf("读取 trace 文件失败: %v\n", err)
 			close(lineCh)
 			wg.Wait()
 			os.Exit(1)
+		}
+		for {
+			if atomic.LoadUint64(&totalParsed)+atomic.LoadUint64(&parseErrCount) >= prev+cnt {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if err := writeDayCSV(filepath.Join(*outDir, "time_stats_day.csv"), agg); err != nil {
+			fmt.Printf("写 day CSV 失败: %v\n", err)
+		}
+		if err := writeHourCSV(filepath.Join(*outDir, "time_stats_hour.csv"), agg); err != nil {
+			fmt.Printf("写 hour CSV 失败: %v\n", err)
+		}
+		if err := writeMinuteCSV(filepath.Join(*outDir, "time_stats_minute.csv"), agg); err != nil {
+			fmt.Printf("写 minute CSV 失败: %v\n", err)
+		}
+		if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
+			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 		}
 	}
 
@@ -123,8 +144,8 @@ func main() {
 	if err := writeMinuteCSV(filepath.Join(*outDir, "time_stats_minute.csv"), agg); err != nil {
 		fmt.Printf("写 minute CSV 失败: %v\n", err)
 	}
-	if err := writeVolumeCSV(filepath.Join(*outDir, "volume_stats.csv"), agg); err != nil {
-		fmt.Printf("写 volume CSV 失败: %v\n", err)
+	if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
+		fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 	}
 
 	// 输出 top volumes
