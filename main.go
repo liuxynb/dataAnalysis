@@ -41,6 +41,8 @@ func main() {
 	outDir := flag.String("o", "output", "output directory")
 	workers := flag.Int("w", 0, "number of parser workers (default: numCPU)")
 	provider := flag.String("provider", "", "trace provider: alicloud|tencent")
+	minuteBuf := flag.Int("minute_buf", 120, "按分钟的卷统计在内存缓存的分钟数量上限，超过后会落盘并清理")
+	disableMinuteVol := flag.Bool("no_minute_volume", false, "禁用按分钟的卷统计以降低内存占用")
 	flag.Parse()
 
 	if *dir == "" {
@@ -75,6 +77,13 @@ func main() {
 	lineCh := make(chan string, 10000)
 	var wg sync.WaitGroup
 	agg := NewAggregator()
+	agg.SetMinuteBufLimit(*minuteBuf)
+	agg.EnableMinuteVolume(!*disableMinuteVol)
+	agg.SetOnEvict(func(minKey string, mv map[string]*CountPair) {
+		if err := writeMinuteVolumeCSV(filepath.Join(*outDir, "volume_stats_minute"), minKey, mv); err != nil {
+			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
+		}
+	})
 
 	var totalParsed uint64
 	var parseErrCount uint64
@@ -121,9 +130,6 @@ func main() {
 		}
 		if err := writeMinuteCSV(filepath.Join(*outDir, "time_stats_minute.csv"), agg); err != nil {
 			fmt.Printf("写 minute CSV 失败: %v\n", err)
-		}
-		if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
-			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 		}
 	}
 

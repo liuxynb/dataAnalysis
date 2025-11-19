@@ -218,6 +218,30 @@ func writeVolumeCSV(path string, ag *Aggregator) error {
 	return nil
 }
 
+func writeMinuteVolumeCSV(dir string, minuteKey string, mv map[string]*CountPair) error {
+	if err := os.MkdirAll(dir, 0755); err != nil { return err }
+	type v struct{ vid string; reads, writes, total int64 }
+	rows := make([]v, 0, len(mv))
+	for vid, cp := range mv { rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes}) }
+	sort.Slice(rows, func(i, j int) bool { return rows[i].total > rows[j].total })
+	name := strings.ReplaceAll(strings.ReplaceAll(minuteKey, ":", "-"), " ", "_")
+	fp := dir + "/volume_" + name + ".csv"
+	f, err := os.Create(fp)
+	if err != nil { return err }
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil { f.Close(); return err }
+	for _, r := range rows {
+		ratio := "0"
+		if r.total > 0 { ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total)) }
+		if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads,10), strconv.FormatInt(r.writes,10), strconv.FormatInt(r.total,10), ratio}); err != nil { f.Close(); return err }
+	}
+	w.Flush()
+	if err := w.Error(); err != nil { f.Close(); return err }
+	f.Close()
+	fmt.Printf("已写出: %s\n", fp)
+	return nil
+}
+
 func writeVolumeByMinuteDir(dir string, ag *Aggregator) error {
 	if err := os.MkdirAll(dir, 0755); err != nil { return err }
 	ag.minuteVolMu.RLock()

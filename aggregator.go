@@ -24,19 +24,31 @@ type Aggregator struct {
 	minuteVolMu  sync.RWMutex
 	minuteVolMap map[string]map[string]*CountPair // key: "01-02 15:04" -> VolumeID -> CountPair
 
+	minuteOrder        []string
+	minuteBufLimit     int
+	onEvict            func(string, map[string]*CountPair)
+	enableMinuteVolume bool
+
 	volMu  sync.RWMutex
 	volMap map[string]*CountPair // key: VolumeID
 }
 
 func NewAggregator() *Aggregator {
 	return &Aggregator{
-		dayMap:       make(map[string]*CountPair),
-		hourMap:      make(map[string]*CountPair),
-		minuteMap:    make(map[string]*CountPair),
-		minuteVolMap: make(map[string]map[string]*CountPair),
-		volMap:       make(map[string]*CountPair),
+		dayMap:             make(map[string]*CountPair),
+		hourMap:            make(map[string]*CountPair),
+		minuteMap:          make(map[string]*CountPair),
+		minuteVolMap:       make(map[string]map[string]*CountPair),
+		minuteOrder:        make([]string, 0, 256),
+		minuteBufLimit:     240,
+		enableMinuteVolume: true,
+		volMap:             make(map[string]*CountPair),
 	}
 }
+
+func (ag *Aggregator) SetMinuteBufLimit(n int) { ag.minuteBufLimit = n }
+func (ag *Aggregator) EnableMinuteVolume(enable bool) { ag.enableMinuteVolume = enable }
+func (ag *Aggregator) SetOnEvict(fn func(string, map[string]*CountPair)) { ag.onEvict = fn }
 
 func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
 	// normalize ioType to "0" (read) or "1" (write)
@@ -89,23 +101,33 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
 	ag.minuteMu.Unlock()
 
 	// minute-volume
-	ag.minuteVolMu.Lock()
-	mv, ok := ag.minuteVolMap[minuteKey]
-	if !ok {
-		mv = make(map[string]*CountPair)
-		ag.minuteVolMap[minuteKey] = mv
+	if ag.enableMinuteVolume {
+		var evictedKey string
+		var evictedMap map[string]*CountPair
+		ag.minuteVolMu.Lock()
+		mv, ok := ag.minuteVolMap[minuteKey]
+		if !ok {
+			mv = make(map[string]*CountPair)
+			ag.minuteVolMap[minuteKey] = mv
+			ag.minuteOrder = append(ag.minuteOrder, minuteKey)
+		}
+		vmin, ok := mv[vol]
+		if !ok {
+			vmin = &CountPair{}
+			mv[vol] = vmin
+		}
+		if ioType == "0" { vmin.Reads++ } else { vmin.Writes++ }
+		if ag.minuteBufLimit > 0 && len(ag.minuteOrder) > ag.minuteBufLimit {
+			evictedKey = ag.minuteOrder[0]
+			evictedMap = ag.minuteVolMap[evictedKey]
+			delete(ag.minuteVolMap, evictedKey)
+			ag.minuteOrder = ag.minuteOrder[1:]
+		}
+		ag.minuteVolMu.Unlock()
+		if evictedMap != nil && ag.onEvict != nil {
+			ag.onEvict(evictedKey, evictedMap)
+		}
 	}
-	vmin, ok := mv[vol]
-	if !ok {
-		vmin = &CountPair{}
-		mv[vol] = vmin
-	}
-	if ioType == "0" {
-		vmin.Reads++
-	} else {
-		vmin.Writes++
-	}
-	ag.minuteVolMu.Unlock()
 
 	// volume
 	ag.volMu.Lock()
