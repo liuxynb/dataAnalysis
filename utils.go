@@ -35,18 +35,20 @@ func writeDayCSV(path string, ag *Aggregator) error {
 	for _, k := range keys {
 		ag.dayMu.RLock()
 		cp := ag.dayMap[k]
+		reads := cp.Reads
+		writes := cp.Writes
 		ag.dayMu.RUnlock()
-		total := cp.Reads + cp.Writes
+		total := reads + writes
 		ratio := "N/A"
-		if cp.Reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(cp.Writes)/float64(cp.Reads))
-		} else if cp.Writes > 0 {
+		if reads > 0 {
+			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
+		} else if writes > 0 {
 			ratio = "0"
 		}
 		row := []string{
 			k,
-			strconv.FormatInt(cp.Reads, 10),
-			strconv.FormatInt(cp.Writes, 10),
+			strconv.FormatInt(reads, 10),
+			strconv.FormatInt(writes, 10),
 			strconv.FormatInt(total, 10),
 			ratio,
 		}
@@ -87,18 +89,20 @@ func writeHourCSV(path string, ag *Aggregator) error {
 	for _, k := range keys {
 		ag.hourMu.RLock()
 		cp := ag.hourMap[k]
+		reads := cp.Reads
+		writes := cp.Writes
 		ag.hourMu.RUnlock()
-		total := cp.Reads + cp.Writes
+		total := reads + writes
 		ratio := "N/A"
-		if cp.Reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(cp.Writes)/float64(cp.Reads))
-		} else if cp.Writes > 0 {
+		if reads > 0 {
+			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
+		} else if writes > 0 {
 			ratio = "0"
 		}
 		if err := w.Write([]string{
 			k,
-			strconv.FormatInt(cp.Reads, 10),
-			strconv.FormatInt(cp.Writes, 10),
+			strconv.FormatInt(reads, 10),
+			strconv.FormatInt(writes, 10),
 			strconv.FormatInt(total, 10),
 			ratio,
 		}); err != nil {
@@ -137,18 +141,20 @@ func writeMinuteCSV(path string, ag *Aggregator) error {
 	for _, k := range keys {
 		ag.minuteMu.RLock()
 		cp := ag.minuteMap[k]
+		reads := cp.Reads
+		writes := cp.Writes
 		ag.minuteMu.RUnlock()
-		total := cp.Reads + cp.Writes
+		total := reads + writes
 		ratio := "N/A"
-		if cp.Reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(cp.Writes)/float64(cp.Reads))
-		} else if cp.Writes > 0 {
+		if reads > 0 {
+			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
+		} else if writes > 0 {
 			ratio = "0"
 		}
 		if err := w.Write([]string{
 			k,
-			strconv.FormatInt(cp.Reads, 10),
-			strconv.FormatInt(cp.Writes, 10),
+			strconv.FormatInt(reads, 10),
+			strconv.FormatInt(writes, 10),
 			strconv.FormatInt(total, 10),
 			ratio,
 		}); err != nil {

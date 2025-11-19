@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var unknownIOWarnCount uint64
+
 type Parser interface {
 	Parse(line string) (time.Time, string, string, bool)
 }
@@ -63,6 +65,8 @@ func normalizeIOType(s string) string {
 	}
 
 	// fallback: conservative treat as write
-	fmt.Printf("警告: 未知 IOType='%s'，按 write 处理\n", s)
+	if atomic.AddUint64(&unknownIOWarnCount, 1) <= 100 {
+		fmt.Printf("警告: 未知 IOType='%s'，按 write 处理\n", s)
+	}
 	return "1"
 }

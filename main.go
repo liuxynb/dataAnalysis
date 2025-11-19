@@ -43,7 +43,10 @@ func main() {
 	provider := flag.String("provider", "", "trace provider: alicloud|tencent")
 	minuteBuf := flag.Int("minute_buf", 120, "按分钟的卷统计在内存缓存的分钟数量上限，超过后会落盘并清理")
 	disableMinuteVol := flag.Bool("no_minute_volume", false, "禁用按分钟的卷统计以降低内存占用")
+	queueSize := flag.Int("queue_size", 10000, "读取通道缓冲大小以控制峰值内存")
+	maxLineMB := flag.Int("max_line_mb", 10, "单行最大字节数上限(MB)，过长将报错")
 	flag.Parse()
+	SetMaxLineBytes(*maxLineMB * 1024 * 1024)
 
 	if *dir == "" {
 		fmt.Println("请使用 -d 指定包含 .gz 的目录")
@@ -74,7 +77,7 @@ func main() {
 	fmt.Printf("文件数: %d\n输出目录: %s\n并发 worker: %d\n", len(paths), *outDir, *workers)
 
 	// channel for raw lines
-	lineCh := make(chan string, 10000)
+	lineCh := make(chan string, *queueSize)
 	var wg sync.WaitGroup
 	agg := NewAggregator()
 	agg.SetMinuteBufLimit(*minuteBuf)

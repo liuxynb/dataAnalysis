@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+var scannerMaxBytes = 10 * 1024 * 1024
+func SetMaxLineBytes(n int) { if n > 0 { scannerMaxBytes = n } }
+
 func streamLinesFromTarGz(path string, lineCh chan<- string) (uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -38,9 +41,8 @@ func streamLinesFromTarGz(path string, lineCh chan<- string) (uint64, error) {
 		}
 		fmt.Printf("正在处理 tar 内文件: %s (size=%d)\n", header.Name, header.Size)
 		scanner := bufio.NewScanner(tr)
-		const maxCapacity = 10 * 1024 * 1024
 		buf := make([]byte, 1024*1024)
-		scanner.Buffer(buf, maxCapacity)
+		scanner.Buffer(buf, scannerMaxBytes)
 
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -71,9 +73,8 @@ func streamLinesFromPlainGz(path string, lineCh chan<- string) (uint64, error) {
 	defer gzr.Close()
 
 	scanner := bufio.NewScanner(gzr)
-	const maxCapacity = 10 * 1024 * 1024
 	buf := make([]byte, 1024*1024)
-	scanner.Buffer(buf, maxCapacity)
+	scanner.Buffer(buf, scannerMaxBytes)
 
 	var n uint64
 	for scanner.Scan() {
