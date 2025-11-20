@@ -34,6 +34,7 @@ func main() {
 	force := flag.Bool("force", false, "overwrite output files")
 	memlimit := flag.Int("memlimit", 64<<20, "memory budget for HDD batching, bytes")
 	bufsize := flag.Int("bufsize", 1<<20, "I/O buffer size in bytes")
+	split := flag.String("split", "day", "split granularity: day|hour|month")
 	flag.Parse()
 
 	if *in == "" {
@@ -117,12 +118,12 @@ func main() {
 			skipped++
 			continue
 		}
-		down := t.In(loc).Format("2006-01-02")
-		days[down] = struct{}{}
-		b := memBufs[down]
+		key := bucketKey(t, *split, loc)
+		days[key] = struct{}{}
+		b := memBufs[key]
 		if b == nil {
 			nb := &bytes.Buffer{}
-			memBufs[down] = nb
+			memBufs[key] = nb
 			b = nb
 		}
 		prev := b.Len()
@@ -130,8 +131,8 @@ func main() {
 		b.WriteByte('\n')
 		delta := b.Len() - prev
 		memUsed += delta
-		daySizes[down] = b.Len()
-		lastUsed[down] = tick
+		daySizes[key] = b.Len()
+		lastUsed[key] = tick
 		tick++
 		written++
 
@@ -245,6 +246,18 @@ func parseDateIndexArg(arg string) int {
 		return i
 	}
 	return 4
+}
+
+func bucketKey(t time.Time, split string, loc *time.Location) string {
+	st := strings.ToLower(strings.TrimSpace(split))
+	tt := t.In(loc)
+	if st == "hour" {
+		return tt.Format("2006-01-02-15")
+	}
+	if st == "month" {
+		return tt.Format("2006-01")
+	}
+	return tt.Format("2006-01-02")
 }
 
 func nthField(line []byte, idx int) []byte {
