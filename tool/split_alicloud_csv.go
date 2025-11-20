@@ -32,6 +32,8 @@ func main() {
 	locName := flag.String("loc", "Asia/Shanghai", "time zone, e.g. Asia/Shanghai or UTC")
 	prefix := flag.String("prefix", "", "output file prefix")
 	force := flag.Bool("force", false, "overwrite output files")
+	maxOpen := flag.Int("maxopen", 64, "maximum concurrently open output files")
+	bufsize := flag.Int("bufsize", 1<<20, "I/O buffer size in bytes")
 	flag.Parse()
 
 	if *in == "" {
@@ -73,7 +75,8 @@ func main() {
 	}
 	defer f.Close()
 
-	r := csv.NewReader(bufio.NewReader(f))
+	br := bufio.NewReaderSize(f, *bufsize)
+	r := csv.NewReader(br)
 	r.FieldsPerRecord = -1
 	r.LazyQuotes = true
 	r.TrimLeadingSpace = true
@@ -95,6 +98,11 @@ func main() {
 
 	writers := map[string]*csv.Writer{}
 	files := map[string]*os.File{}
+	bufs := map[string]*bufio.Writer{}
+	createdOnce := map[string]bool{}
+	lastUsed := map[string]int64{}
+	days := map[string]struct{}{}
+	var tick int64
 
 	var total, written, skipped int
 
@@ -122,19 +130,40 @@ func main() {
 			skipped++
 			continue
 		}
-		month := fmt.Sprintf("%04d-%02d", t.Year(), int(t.Month()))
-		w := writers[month]
+		down := t.In(loc).Format("2006-01-02")
+		days[down] = struct{}{}
+		w := writers[down]
 		if w == nil {
-			p := filepath.Join(*out, fmt.Sprintf("%s-%s.csv", *prefix, month))
+			if len(writers) >= *maxOpen {
+				var evictKey string
+				var minTick int64 = 1 << 62
+				for k, v := range lastUsed {
+					if v < minTick {
+						minTick = v
+						evictKey = k
+					}
+				}
+				if evictKey != "" {
+					writers[evictKey].Flush()
+					bufs[evictKey].Flush()
+					files[evictKey].Close()
+					delete(writers, evictKey)
+					delete(bufs, evictKey)
+					delete(files, evictKey)
+					delete(lastUsed, evictKey)
+				}
+			}
+			p := filepath.Join(*out, fmt.Sprintf("%s-%s.csv", *prefix, down))
 			var of *os.File
 			var created bool
-			if *force {
+			if *force && !createdOnce[down] {
 				of, err = os.Create(p)
 				if err != nil {
 					skipped++
 					continue
 				}
 				created = true
+				createdOnce[down] = true
 			} else {
 				of, err = os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 				if err != nil {
@@ -152,9 +181,11 @@ func main() {
 					created = true
 				}
 			}
-			files[month] = of
-			w = csv.NewWriter(of)
-			writers[month] = w
+			files[down] = of
+			buf := bufio.NewWriterSize(of, *bufsize)
+			bufs[down] = buf
+			w = csv.NewWriter(buf)
+			writers[down] = w
 			if created {
 				if err := w.Write(header); err != nil {
 					skipped++
@@ -166,45 +197,25 @@ func main() {
 			skipped++
 			continue
 		}
+		lastUsed[down] = tick
+		tick++
 		written++
 	}
 
 	for _, w := range writers {
 		w.Flush()
 	}
+	for _, b := range bufs {
+		b.Flush()
+	}
 	for _, f := range files {
 		f.Close()
 	}
-	fmt.Fprintf(os.Stdout, "rows=%d written=%d skipped=%d files=%d\n", total, written, skipped, len(writers))
+	fmt.Fprintf(os.Stdout, "rows=%d written=%d skipped=%d days=%d\n", total, written, skipped, len(days))
 }
 
 func findDateIndex(header []string, name string) int {
-	if name != "" {
-		for i, h := range header {
-			if strings.EqualFold(strings.TrimSpace(h), strings.TrimSpace(name)) {
-				return i
-			}
-		}
-		return -1
-	}
-	candidates := []string{
-		"BillingTime", "BillingDate", "PayTime", "Time", "Date", "UsageStartTime",
-		"StartTime", "CreateTime", "OrderCreateTime", "InstanceCreateTime", "PaymentTime",
-		"Timestamp",
-	}
-	lhdr := make([]string, len(header))
-	for i := range header {
-		lhdr[i] = strings.ToLower(strings.TrimSpace(header[i]))
-	}
-	for _, c := range candidates {
-		lc := strings.ToLower(c)
-		for i, h := range lhdr {
-			if h == lc {
-				return i
-			}
-		}
-	}
-	return -1
+	return 4
 }
 
 func parseDate(s string, layout string, unit string, loc *time.Location) (time.Time, bool) {
