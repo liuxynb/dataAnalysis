@@ -23,7 +23,7 @@ func listGzFiles(dir string) ([]string, error) {
 		}
 		if info.Mode().IsRegular() {
 			ext := filepath.Ext(path)
-			if ext == ".gz" || ext == ".tgz" || strings.HasSuffix(path, ".tar.gz") {
+			if ext == ".csv" || ext == ".gz" || ext == ".tgz" || strings.HasSuffix(path, ".tar.gz") {
 				paths = append(paths, path)
 			}
 		}
@@ -37,7 +37,7 @@ func listGzFiles(dir string) ([]string, error) {
 
 func main() {
 	// CLI flags
-	dir := flag.String("d", "", "directory containing .gz trace files (recursive)")
+	dir := flag.String("d", "", "directory containing .csv or .gz trace files (recursive)")
 	outDir := flag.String("o", "output", "output directory")
 	workers := flag.Int("w", 0, "number of parser workers (default: numCPU)")
 	provider := flag.String("provider", "", "trace provider: alicloud|tencent")
@@ -49,7 +49,7 @@ func main() {
 	SetMaxLineBytes(*maxLineMB * 1024 * 1024)
 
 	if *dir == "" {
-		fmt.Println("请使用 -d 指定包含 .gz 的目录")
+		fmt.Println("请使用 -d 指定包含 .csv 或 .gz 的目录")
 		os.Exit(1)
 	}
 	if *workers <= 0 {
@@ -71,7 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 	if len(paths) == 0 {
-		fmt.Println("目录内未找到 .gz 文件")
+		fmt.Println("目录内未找到 .csv/.gz 文件")
 		os.Exit(1)
 	}
 	fmt.Printf("文件数: %d\n输出目录: %s\n并发 worker: %d\n", len(paths), *outDir, *workers)
@@ -112,7 +112,7 @@ func main() {
 	// producer: read tar.gz and stream lines into lineCh
 	for _, p := range paths {
 		prev := atomic.LoadUint64(&totalParsed) + atomic.LoadUint64(&parseErrCount)
-		cnt, err := streamLinesFromGzAuto(p, lineCh)
+		cnt, err := streamLinesAuto(p, lineCh)
 		if err != nil {
 			fmt.Printf("读取 trace 文件失败: %v\n", err)
 			close(lineCh)

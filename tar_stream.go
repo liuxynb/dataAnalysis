@@ -91,9 +91,38 @@ func streamLinesFromPlainGz(path string, lineCh chan<- string) (uint64, error) {
 	return n, nil
 }
 
-func streamLinesFromGzAuto(path string, lineCh chan<- string) (uint64, error) {
+func streamLinesFromPlainFile(path string, lineCh chan<- string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 1024*1024)
+	scanner.Buffer(buf, scannerMaxBytes)
+
+	var n uint64
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(strings.TrimSpace(line)) == 0 {
+			continue
+		}
+		lineCh <- line
+		n++
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("扫描文件 %s 错误: %v\n", path, err)
+	}
+	return n, nil
+}
+
+func streamLinesAuto(path string, lineCh chan<- string) (uint64, error) {
 	if strings.HasSuffix(path, ".tar.gz") || strings.HasSuffix(path, ".tgz") {
 		return streamLinesFromTarGz(path, lineCh)
 	}
-	return streamLinesFromPlainGz(path, lineCh)
+	if strings.HasSuffix(path, ".gz") {
+		return streamLinesFromPlainGz(path, lineCh)
+	}
+	return streamLinesFromPlainFile(path, lineCh)
 }
