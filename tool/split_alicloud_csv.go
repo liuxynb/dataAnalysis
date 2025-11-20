@@ -12,7 +12,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/csv"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -32,7 +32,7 @@ func main() {
 	locName := flag.String("loc", "Asia/Shanghai", "time zone, e.g. Asia/Shanghai or UTC")
 	prefix := flag.String("prefix", "", "output file prefix")
 	force := flag.Bool("force", false, "overwrite output files")
-	maxOpen := flag.Int("maxopen", 64, "maximum concurrently open output files")
+	memlimit := flag.Int("memlimit", 64<<20, "memory budget for HDD batching, bytes")
 	bufsize := flag.Int("bufsize", 1<<20, "I/O buffer size in bytes")
 	flag.Parse()
 
@@ -76,146 +76,193 @@ func main() {
 	defer f.Close()
 
 	br := bufio.NewReaderSize(f, *bufsize)
-	r := csv.NewReader(br)
-	r.FieldsPerRecord = -1
-	r.LazyQuotes = true
-	r.TrimLeadingSpace = true
 
-	header, err := r.Read()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	for i := range header {
-		header[i] = strings.TrimPrefix(header[i], "\uFEFF")
-	}
-
-	dIdx := findDateIndex(header, *dateCol)
+	dIdx := parseDateIndexArg(*dateCol)
 	if dIdx < 0 {
-		fmt.Fprintln(os.Stderr, "date column not found")
+		fmt.Fprintln(os.Stderr, "invalid -date")
 		os.Exit(1)
 	}
 
-	writers := map[string]*csv.Writer{}
-	files := map[string]*os.File{}
-	bufs := map[string]*bufio.Writer{}
-	createdOnce := map[string]bool{}
+	memBufs := map[string]*bytes.Buffer{}
+	dayCreated := map[string]bool{}
+	daySizes := map[string]int{}
 	lastUsed := map[string]int64{}
 	days := map[string]struct{}{}
 	var tick int64
+	var memUsed int
 
 	var total, written, skipped int
 
 	for {
-		row, err := r.Read()
+		line, err := br.ReadBytes('\n')
 		if err == io.EOF {
-			break
-		}
-		if err != nil {
+			if len(line) == 0 {
+				break
+			}
+		} else if err != nil {
 			skipped++
+			continue
+		}
+		if len(line) == 0 {
 			continue
 		}
 		total++
-		if dIdx >= len(row) {
+		dsb := nthField(line, dIdx)
+		if len(dsb) == 0 {
 			skipped++
 			continue
 		}
-		ds := strings.TrimSpace(row[dIdx])
-		if ds == "" {
-			skipped++
-			continue
-		}
-		t, ok := parseDate(ds, *format, *epochUnit, loc)
+		t, ok := parseDate(string(dsb), *format, *epochUnit, loc)
 		if !ok {
 			skipped++
 			continue
 		}
 		down := t.In(loc).Format("2006-01-02")
 		days[down] = struct{}{}
-		w := writers[down]
-		if w == nil {
-			if len(writers) >= *maxOpen {
-				var evictKey string
+		b := memBufs[down]
+		if b == nil {
+			nb := &bytes.Buffer{}
+			memBufs[down] = nb
+			b = nb
+		}
+		prev := b.Len()
+		b.Write(bytes.TrimRight(line, "\r\n"))
+		b.WriteByte('\n')
+		delta := b.Len() - prev
+		memUsed += delta
+		daySizes[down] = b.Len()
+		lastUsed[down] = tick
+		tick++
+		written++
+
+		if memUsed > *memlimit {
+			var target string
+			var maxSize int
+			for k, sz := range daySizes {
+				if sz > maxSize {
+					maxSize = sz
+					target = k
+				}
+			}
+			if target == "" {
 				var minTick int64 = 1 << 62
 				for k, v := range lastUsed {
 					if v < minTick {
 						minTick = v
-						evictKey = k
+						target = k
 					}
 				}
-				if evictKey != "" {
-					writers[evictKey].Flush()
-					bufs[evictKey].Flush()
-					files[evictKey].Close()
-					delete(writers, evictKey)
-					delete(bufs, evictKey)
-					delete(files, evictKey)
-					delete(lastUsed, evictKey)
-				}
 			}
-			p := filepath.Join(*out, fmt.Sprintf("%s-%s.csv", *prefix, down))
-			var of *os.File
-			var created bool
-			if *force && !createdOnce[down] {
-				of, err = os.Create(p)
-				if err != nil {
-					skipped++
-					continue
-				}
-				created = true
-				createdOnce[down] = true
-			} else {
-				of, err = os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-				if err != nil {
-					if os.IsExist(err) {
-						of, err = os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0644)
-						if err != nil {
-							skipped++
-							continue
-						}
-					} else {
+			if target != "" && memBufs[target].Len() > 0 {
+				p := filepath.Join(*out, fmt.Sprintf("%s-%s.csv", *prefix, target))
+				var of *os.File
+				if *force && !dayCreated[target] {
+					of, err = os.Create(p)
+					if err != nil {
 						skipped++
 						continue
 					}
 				} else {
-					created = true
+					of, err = os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+					if err != nil {
+						if os.IsExist(err) {
+							of, err = os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0644)
+							if err != nil {
+								skipped++
+								continue
+							}
+						} else {
+							skipped++
+							continue
+						}
+					} else {
+
+					}
 				}
-			}
-			files[down] = of
-			buf := bufio.NewWriterSize(of, *bufsize)
-			bufs[down] = buf
-			w = csv.NewWriter(buf)
-			writers[down] = w
-			if created {
-				if err := w.Write(header); err != nil {
+				bw := bufio.NewWriterSize(of, *bufsize)
+				if _, err := bw.Write(memBufs[target].Bytes()); err != nil {
+					bw.Flush()
+					of.Close()
 					skipped++
 					continue
 				}
+				bw.Flush()
+				of.Close()
+				memUsed -= memBufs[target].Len()
+				memBufs[target].Reset()
+				daySizes[target] = 0
+				dayCreated[target] = true
 			}
 		}
-		if err := w.Write(row); err != nil {
+	}
+
+	for day, buf := range memBufs {
+		if buf.Len() == 0 {
+			continue
+		}
+		p := filepath.Join(*out, fmt.Sprintf("%s-%s.csv", *prefix, day))
+		var of *os.File
+		if *force && !dayCreated[day] {
+			of, err = os.Create(p)
+			if err != nil {
+				skipped++
+				continue
+			}
+		} else {
+			of, err = os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+			if err != nil {
+				if os.IsExist(err) {
+					of, err = os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0644)
+					if err != nil {
+						skipped++
+						continue
+					}
+				} else {
+					skipped++
+					continue
+				}
+			} else {
+			}
+		}
+		bw := bufio.NewWriterSize(of, *bufsize)
+		if _, err := bw.Write(buf.Bytes()); err != nil {
+			bw.Flush()
+			of.Close()
 			skipped++
 			continue
 		}
-		lastUsed[down] = tick
-		tick++
-		written++
-	}
-
-	for _, w := range writers {
-		w.Flush()
-	}
-	for _, b := range bufs {
-		b.Flush()
-	}
-	for _, f := range files {
-		f.Close()
+		bw.Flush()
+		of.Close()
 	}
 	fmt.Fprintf(os.Stdout, "rows=%d written=%d skipped=%d days=%d\n", total, written, skipped, len(days))
 }
 
-func findDateIndex(header []string, name string) int {
+func parseDateIndexArg(arg string) int {
+	if strings.TrimSpace(arg) == "" {
+		return 4
+	}
+	if i, err := strconv.Atoi(strings.TrimSpace(arg)); err == nil && i >= 0 {
+		return i
+	}
 	return 4
+}
+
+func nthField(line []byte, idx int) []byte {
+	start := 0
+	pos := 0
+	for i, c := range line {
+		if c == ',' {
+			if pos == idx {
+				return bytes.TrimSpace(line[start:i])
+			}
+			pos++
+			start = i + 1
+		}
+	}
+	if pos == idx {
+		return bytes.TrimSpace(line[start:])
+	}
+	return nil
 }
 
 func parseDate(s string, layout string, unit string, loc *time.Location) (time.Time, bool) {
