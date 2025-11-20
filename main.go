@@ -35,6 +35,17 @@ func listGzFiles(dir string) ([]string, error) {
 	return paths, nil
 }
 
+func parseTimeLocal(s string) (time.Time, bool) {
+	l := []string{"2006-01-02 15:04:05","2006-01-02 15:04","2006-01-02"}
+	for _, layout := range l {
+		t, err := time.ParseInLocation(layout, strings.TrimSpace(s), time.Local)
+		if err == nil { return t, true }
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	if err == nil { return t.Local(), true }
+	return time.Time{}, false
+}
+
 func main() {
 	// CLI flags
 	dir := flag.String("d", "", "directory containing .csv or .gz trace files (recursive)")
@@ -45,8 +56,18 @@ func main() {
 	disableMinuteVol := flag.Bool("no_minute_volume", false, "禁用按分钟的卷统计以降低内存占用")
 	queueSize := flag.Int("queue_size", 10000, "读取通道缓冲大小以控制峰值内存")
 	maxLineMB := flag.Int("max_line_mb", 10, "单行最大字节数上限(MB)，过长将报错")
+	from := flag.String("from", "", "起始时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
+	to := flag.String("to", "", "结束时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
 	flag.Parse()
 	SetMaxLineBytes(*maxLineMB * 1024 * 1024)
+
+	var fromPtr, toPtr *time.Time
+	if *from != "" {
+		if t, ok := parseTimeLocal(*from); ok { fromPtr = &t } else { fmt.Printf("起始时间格式不正确: %s\n", *from); os.Exit(1) }
+	}
+	if *to != "" {
+		if t, ok := parseTimeLocal(*to); ok { toPtr = &t } else { fmt.Printf("结束时间格式不正确: %s\n", *to); os.Exit(1) }
+	}
 
 	if *dir == "" {
 		fmt.Println("请使用 -d 指定包含 .csv 或 .gz 的目录")
@@ -87,6 +108,7 @@ func main() {
 			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 		}
 	})
+	agg.SetTimeRange(fromPtr, toPtr)
 
 	var totalParsed uint64
 	var parseErrCount uint64

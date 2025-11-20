@@ -31,6 +31,11 @@ type Aggregator struct {
 
 	volMu  sync.RWMutex
 	volMap map[string]*CountPair // key: VolumeID
+
+	hasStart bool
+	start    time.Time
+	hasEnd   bool
+	end      time.Time
 }
 
 func NewAggregator() *Aggregator {
@@ -49,10 +54,16 @@ func NewAggregator() *Aggregator {
 func (ag *Aggregator) SetMinuteBufLimit(n int) { ag.minuteBufLimit = n }
 func (ag *Aggregator) EnableMinuteVolume(enable bool) { ag.enableMinuteVolume = enable }
 func (ag *Aggregator) SetOnEvict(fn func(string, map[string]*CountPair)) { ag.onEvict = fn }
+func (ag *Aggregator) SetTimeRange(from, to *time.Time) {
+	if from != nil { ag.hasStart = true; ag.start = *from } else { ag.hasStart = false }
+	if to != nil { ag.hasEnd = true; ag.end = *to } else { ag.hasEnd = false }
+}
 
 func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
 	// normalize ioType to "0" (read) or "1" (write)
 	ioType = normalizeIOType(ioType)
+	if ag.hasStart && ts.Before(ag.start) { return }
+	if ag.hasEnd && ts.After(ag.end) { return }
 
 	dayKey := ts.Format("01-02")
 	hourKey := ts.Format("01-02 15")
