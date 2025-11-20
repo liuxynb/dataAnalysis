@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,6 +28,7 @@ func main() {
 	out := flag.String("out", "", "output directory")
 	dateCol := flag.String("date", "", "date column name")
 	format := flag.String("format", "", "date layout")
+	epochUnit := flag.String("epoch", "", "epoch unit for numeric timestamps: s|ms|us|ns")
 	locName := flag.String("loc", "Asia/Shanghai", "time zone, e.g. Asia/Shanghai or UTC")
 	prefix := flag.String("prefix", "", "output file prefix")
 	force := flag.Bool("force", false, "overwrite output files")
@@ -115,7 +117,7 @@ func main() {
 			skipped++
 			continue
 		}
-		t, ok := parseDate(ds, *format, loc)
+		t, ok := parseDate(ds, *format, *epochUnit, loc)
 		if !ok {
 			skipped++
 			continue
@@ -188,6 +190,7 @@ func findDateIndex(header []string, name string) int {
 	candidates := []string{
 		"BillingTime", "BillingDate", "PayTime", "Time", "Date", "UsageStartTime",
 		"StartTime", "CreateTime", "OrderCreateTime", "InstanceCreateTime", "PaymentTime",
+		"Timestamp",
 	}
 	lhdr := make([]string, len(header))
 	for i := range header {
@@ -204,12 +207,58 @@ func findDateIndex(header []string, name string) int {
 	return -1
 }
 
-func parseDate(s string, layout string, loc *time.Location) (time.Time, bool) {
+func parseDate(s string, layout string, unit string, loc *time.Location) (time.Time, bool) {
 	if layout != "" {
 		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
 			return t, true
 		}
 		return time.Time{}, false
+	}
+	trim := strings.TrimSpace(s)
+	if trim == "" {
+		return time.Time{}, false
+	}
+	allDigits := true
+	for i := 0; i < len(trim); i++ {
+		if trim[i] < '0' || trim[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		v, err := strconv.ParseInt(trim, 10, 64)
+		if err != nil {
+			return time.Time{}, false
+		}
+		switch strings.ToLower(unit) {
+		case "s":
+			return time.Unix(v, 0).In(loc), true
+		case "ms":
+			sec := v / 1000
+			nsec := (v % 1000) * int64(time.Millisecond)
+			return time.Unix(sec, nsec).In(loc), true
+		case "us":
+			sec := v / 1_000_000
+			nsec := (v % 1_000_000) * int64(time.Microsecond)
+			return time.Unix(sec, nsec).In(loc), true
+		case "ns":
+			sec := v / 1_000_000_000
+			nsec := v % 1_000_000_000
+			return time.Unix(sec, nsec).In(loc), true
+		default:
+			switch {
+			case len(trim) >= 16:
+				sec := v / 1_000_000
+				nsec := (v % 1_000_000) * int64(time.Microsecond)
+				return time.Unix(sec, nsec).In(loc), true
+			case len(trim) >= 13:
+				sec := v / 1_000
+				nsec := (v % 1_000) * int64(time.Millisecond)
+				return time.Unix(sec, nsec).In(loc), true
+			default:
+				return time.Unix(v, 0).In(loc), true
+			}
+		}
 	}
 	layouts := []string{
 		time.RFC3339,
