@@ -21,7 +21,7 @@ help:
 	@echo ""
 	@echo "参数说明:"
 	@echo "  DIR                输入目录，支持 .csv/.gz/.tar.gz（递归）"
-	@echo "  PROVIDER           alicloud|tencent，默认: $(PROVIDER)"
+	@echo "  PROVIDER           alicloud|tencent|msrc，默认: $(PROVIDER)"
 	@echo "  OUT_DIR            输出目录，默认: $(OUT_DIR)"
 	@echo "  WORKERS            并发 worker 数，默认: CPU 核心数"
 	@echo "  FROM, TO           统计时间范围（本地时区），格式: YYYY-MM-DD[ HH:MM[:SS]] 或 RFC3339"

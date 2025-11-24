@@ -13,6 +13,7 @@ import (
 
 	"ana/providers/alicloud"
 	"ana/providers/tencent"
+	"ana/providers/msrc"
 )
 
 func listGzFiles(dir string) ([]string, error) {
@@ -51,7 +52,7 @@ func main() {
 	dir := flag.String("d", "", "directory containing .csv or .gz trace files (recursive)")
 	outDir := flag.String("o", "output", "output directory")
 	workers := flag.Int("w", 0, "number of parser workers (default: numCPU)")
-	provider := flag.String("provider", "", "trace provider: alicloud|tencent")
+	provider := flag.String("provider", "", "trace provider: alicloud|tencent|msrc")
 	minuteBuf := flag.Int("minute_buf", 120, "按分钟的卷统计在内存缓存的分钟数量上限，超过后会落盘并清理")
 	disableMinuteVol := flag.Bool("no_minute_volume", false, "禁用按分钟的卷统计以降低内存占用")
 	queueSize := flag.Int("queue_size", 10000, "读取通道缓冲大小以控制峰值内存")
@@ -76,8 +77,8 @@ func main() {
 	if *workers <= 0 {
 		*workers = runtime.NumCPU()
 	}
-	if strings.ToLower(*provider) != "alicloud" && strings.ToLower(*provider) != "tencent" {
-		fmt.Println("请使用 -provider 指定 alicloud 或 tencent")
+	if pt := strings.ToLower(*provider); pt != "alicloud" && pt != "tencent" && pt != "msrc" {
+		fmt.Println("请使用 -provider 指定 alicloud、tencent 或 msrc")
 		os.Exit(1)
 	}
 
@@ -118,6 +119,10 @@ func main() {
 	switch strings.ToLower(*provider) {
 	case "alicloud":
 		p = alicloud.NewParser()
+	case "tencent":
+		p = tencent.NewParser()
+	case "msrc":
+		p = msrc.NewParser()
 	default:
 		p = tencent.NewParser()
 	}
