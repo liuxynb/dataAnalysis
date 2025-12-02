@@ -34,7 +34,7 @@ func main() {
 	force := flag.Bool("force", false, "overwrite output files")
 	memlimit := flag.Int("memlimit", 64<<20, "memory budget for HDD batching, bytes")
 	bufsize := flag.Int("bufsize", 1<<20, "I/O buffer size in bytes")
-	split := flag.String("split", "day", "split granularity: day|hour|month")
+	split := flag.String("split", "day", "split granularity: day|hour|month|minute")
 	flag.Parse()
 
 	if *in == "" {
@@ -251,6 +251,9 @@ func parseDateIndexArg(arg string) int {
 func bucketKey(t time.Time, split string, loc *time.Location) string {
 	st := strings.ToLower(strings.TrimSpace(split))
 	tt := t.In(loc)
+	if st == "minute" {
+		return tt.Format("2006-01-02-15-04")
+	}
 	if st == "hour" {
 		return tt.Format("2006-01-02-15")
 	}
