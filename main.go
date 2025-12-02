@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"ana/providers/alicloud"
-	"ana/providers/tencent"
 	"ana/providers/msrc"
+	"ana/providers/tencent"
 )
 
 func listGzFiles(dir string) ([]string, error) {
@@ -37,13 +37,17 @@ func listGzFiles(dir string) ([]string, error) {
 }
 
 func parseTimeLocal(s string) (time.Time, bool) {
-	l := []string{"2006-01-02 15:04:05","2006-01-02 15:04","2006-01-02"}
+	l := []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"}
 	for _, layout := range l {
 		t, err := time.ParseInLocation(layout, strings.TrimSpace(s), time.Local)
-		if err == nil { return t, true }
+		if err == nil {
+			return t, true
+		}
 	}
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
-	if err == nil { return t.Local(), true }
+	if err == nil {
+		return t.Local(), true
+	}
 	return time.Time{}, false
 }
 
@@ -59,15 +63,26 @@ func main() {
 	maxLineMB := flag.Int("max_line_mb", 10, "单行最大字节数上限(MB)，过长将报错")
 	from := flag.String("from", "", "起始时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
 	to := flag.String("to", "", "结束时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
+	targetVol := flag.String("target_vol", "", "指定统计条带更新的目标 Volume ID")
 	flag.Parse()
 	SetMaxLineBytes(*maxLineMB * 1024 * 1024)
 
 	var fromPtr, toPtr *time.Time
 	if *from != "" {
-		if t, ok := parseTimeLocal(*from); ok { fromPtr = &t } else { fmt.Printf("起始时间格式不正确: %s\n", *from); os.Exit(1) }
+		if t, ok := parseTimeLocal(*from); ok {
+			fromPtr = &t
+		} else {
+			fmt.Printf("起始时间格式不正确: %s\n", *from)
+			os.Exit(1)
+		}
 	}
 	if *to != "" {
-		if t, ok := parseTimeLocal(*to); ok { toPtr = &t } else { fmt.Printf("结束时间格式不正确: %s\n", *to); os.Exit(1) }
+		if t, ok := parseTimeLocal(*to); ok {
+			toPtr = &t
+		} else {
+			fmt.Printf("结束时间格式不正确: %s\n", *to)
+			os.Exit(1)
+		}
 	}
 
 	if *dir == "" {
@@ -104,6 +119,7 @@ func main() {
 	agg := NewAggregator()
 	agg.SetMinuteBufLimit(*minuteBuf)
 	agg.EnableMinuteVolume(!*disableMinuteVol)
+	agg.SetTargetVolume(*targetVol)
 	agg.SetOnEvict(func(minKey string, mv map[string]*CountPair) {
 		if err := writeMinuteVolumeCSV(filepath.Join(*outDir, "volume_stats_minute"), minKey, mv); err != nil {
 			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
@@ -180,8 +196,20 @@ func main() {
 	if err := writeMinuteCSV(filepath.Join(*outDir, "time_stats_minute.csv"), agg); err != nil {
 		fmt.Printf("写 minute CSV 失败: %v\n", err)
 	}
+	if err := writeVolumeCSV(filepath.Join(*outDir, "volume_stats.csv"), agg); err != nil {
+		fmt.Printf("写 volume CSV 失败: %v\n", err)
+	}
 	if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
 		fmt.Printf("写 volume-by-minute 失败: %v\n", err)
+	}
+
+	if *targetVol != "" {
+		if err := writeStripeStats(filepath.Join(*outDir, "stripe_stats.csv"), agg); err != nil {
+			fmt.Printf("写 stripe stats 失败: %v\n", err)
+		}
+		if err := writeStripeHeatMap(filepath.Join(*outDir, "stripe_block_heatmap.csv"), agg); err != nil {
+			fmt.Printf("写 stripe heatmap 失败: %v\n", err)
+		}
 	}
 
 	// 输出 top volumes

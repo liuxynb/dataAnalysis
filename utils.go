@@ -225,41 +225,68 @@ func writeVolumeCSV(path string, ag *Aggregator) error {
 }
 
 func writeMinuteVolumeCSV(dir string, minuteKey string, mv map[string]*CountPair) error {
-	if err := os.MkdirAll(dir, 0755); err != nil { return err }
-	type v struct{ vid string; reads, writes, total int64 }
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	type v struct {
+		vid                  string
+		reads, writes, total int64
+	}
 	rows := make([]v, 0, len(mv))
-	for vid, cp := range mv { rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes}) }
+	for vid, cp := range mv {
+		rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
+	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].total > rows[j].total })
 	name := strings.ReplaceAll(strings.ReplaceAll(minuteKey, ":", "-"), " ", "_")
 	fp := dir + "/volume_" + name + ".csv"
 	f, err := os.Create(fp)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil { f.Close(); return err }
+	if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil {
+		f.Close()
+		return err
+	}
 	for _, r := range rows {
 		ratio := "0"
-		if r.total > 0 { ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total)) }
-		if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads,10), strconv.FormatInt(r.writes,10), strconv.FormatInt(r.total,10), ratio}); err != nil { f.Close(); return err }
+		if r.total > 0 {
+			ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total))
+		}
+		if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads, 10), strconv.FormatInt(r.writes, 10), strconv.FormatInt(r.total, 10), ratio}); err != nil {
+			f.Close()
+			return err
+		}
 	}
 	w.Flush()
-	if err := w.Error(); err != nil { f.Close(); return err }
+	if err := w.Error(); err != nil {
+		f.Close()
+		return err
+	}
 	f.Close()
 	fmt.Printf("已写出: %s\n", fp)
 	return nil
 }
 
 func writeVolumeByMinuteDir(dir string, ag *Aggregator) error {
-	if err := os.MkdirAll(dir, 0755); err != nil { return err }
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 	ag.minuteVolMu.RLock()
 	keys := make([]string, 0, len(ag.minuteVolMap))
-	for k := range ag.minuteVolMap { keys = append(keys, k) }
+	for k := range ag.minuteVolMap {
+		keys = append(keys, k)
+	}
 	ag.minuteVolMu.RUnlock()
 	sort.Strings(keys)
 	for _, k := range keys {
 		ag.minuteVolMu.RLock()
 		mv := ag.minuteVolMap[k]
 		ag.minuteVolMu.RUnlock()
-		type v struct{ vid string; reads, writes, total int64 }
+		type v struct {
+			vid                  string
+			reads, writes, total int64
+		}
 		rows := make([]v, 0, len(mv))
 		for vid, cp := range mv {
 			rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
@@ -268,16 +295,29 @@ func writeVolumeByMinuteDir(dir string, ag *Aggregator) error {
 		name := strings.ReplaceAll(strings.ReplaceAll(k, ":", "-"), " ", "_")
 		fp := dir + "/volume_" + name + ".csv"
 		f, err := os.Create(fp)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		w := csv.NewWriter(f)
-		if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil { f.Close(); return err }
+		if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil {
+			f.Close()
+			return err
+		}
 		for _, r := range rows {
 			ratio := "0"
-			if r.total > 0 { ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total)) }
-			if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads,10), strconv.FormatInt(r.writes,10), strconv.FormatInt(r.total,10), ratio}); err != nil { f.Close(); return err }
+			if r.total > 0 {
+				ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total))
+			}
+			if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads, 10), strconv.FormatInt(r.writes, 10), strconv.FormatInt(r.total, 10), ratio}); err != nil {
+				f.Close()
+				return err
+			}
 		}
 		w.Flush()
-		if err := w.Error(); err != nil { f.Close(); return err }
+		if err := w.Error(); err != nil {
+			f.Close()
+			return err
+		}
 		f.Close()
 		fmt.Printf("已写出: %s\n", fp)
 	}
@@ -313,6 +353,101 @@ func printTopVolumes(ag *Aggregator, top int) {
 		fmt.Printf("%2d) Volume %s: Reads=%d Writes=%d Total=%d ReadRatio=%.2f%%\n",
 			i+1, r.vid, r.reads, r.writes, r.total, readRatio)
 	}
+}
+
+func writeStripeStats(path string, ag *Aggregator) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+
+	if err := w.Write([]string{"UpdatedBlocksInStripe", "Count"}); err != nil {
+		return err
+	}
+
+	ag.stripeMu.Lock()
+	// Sort keys
+	keys := make([]int, 0, len(ag.stripeUpdateMap))
+	for k := range ag.stripeUpdateMap {
+		keys = append(keys, k)
+	}
+	ag.stripeMu.Unlock()
+
+	sort.Ints(keys)
+
+	ag.stripeMu.Lock()
+	defer ag.stripeMu.Unlock()
+
+	for _, k := range keys {
+		count := ag.stripeUpdateMap[k]
+		if err := w.Write([]string{
+			strconv.Itoa(k),
+			strconv.Itoa(count),
+		}); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("已写出: %s\n", path)
+	return nil
+}
+
+func writeStripeHeatMap(path string, ag *Aggregator) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+
+	if err := w.Write([]string{"StripeID", "BlockIndex", "BlockType", "Reads", "Writes", "TotalOps"}); err != nil {
+		return err
+	}
+
+	ag.stripeMu.Lock()
+	// Sort stripe IDs for deterministic output
+	stripeIDs := make([]int64, 0, len(ag.stripeBlockHeatMap))
+	for k := range ag.stripeBlockHeatMap {
+		stripeIDs = append(stripeIDs, k)
+	}
+	ag.stripeMu.Unlock()
+
+	// sort.Slice is not efficient for int64, use custom wrapper or just simple bubble/insertion if small, 
+	// but for millions use standard sort with interface or Slice
+	sort.Slice(stripeIDs, func(i, j int) bool { return stripeIDs[i] < stripeIDs[j] })
+
+	ag.stripeMu.Lock()
+	defer ag.stripeMu.Unlock()
+
+	for _, sid := range stripeIDs {
+		counters := ag.stripeBlockHeatMap[sid]
+		for idx := 0; idx < 14; idx++ {
+			reads := counters[idx].Reads
+			writes := counters[idx].Writes
+			if reads == 0 && writes == 0 {
+				continue
+			}
+			blockType := "Data"
+			if idx >= 10 {
+				blockType = "Parity"
+			}
+			if err := w.Write([]string{
+				strconv.FormatInt(sid, 10),
+				strconv.Itoa(idx),
+				blockType,
+				strconv.FormatInt(reads, 10),
+				strconv.FormatInt(writes, 10),
+				strconv.FormatInt(reads+writes, 10),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	fmt.Printf("已写出: %s\n", path)
+	return nil
 }
 
 func maxInt64(a, b int64) int64 {

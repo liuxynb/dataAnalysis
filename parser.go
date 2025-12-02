@@ -10,17 +10,17 @@ import (
 var unknownIOWarnCount uint64
 
 type Parser interface {
-	Parse(line string) (time.Time, string, string, bool)
+	Parse(line string) (time.Time, string, string, int64, int64, bool)
 }
 
 func parserWorker(lineCh <-chan string, parser Parser, agg *Aggregator, totalParsed *uint64, parseErrCount *uint64) {
 	for line := range lineCh {
-		ts, ioType, volID, ok := parser.Parse(line)
+		ts, ioType, volID, offset, size, ok := parser.Parse(line)
 		if !ok {
 			atomic.AddUint64(parseErrCount, 1)
 			continue
 		}
-		agg.addRecord(ts, ioType, volID)
+		agg.addRecord(ts, ioType, volID, offset, size)
 		atomic.AddUint64(totalParsed, 1)
 	}
 }

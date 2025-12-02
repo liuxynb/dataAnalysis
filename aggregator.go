@@ -36,6 +36,15 @@ type Aggregator struct {
 	start    time.Time
 	hasEnd   bool
 	end      time.Time
+
+	stripeMu        sync.Mutex
+	targetVolume    string
+	stripeUpdateMap map[int]int // Key: Number of blocks updated (1-10), Value: Count
+
+	// map[StripeID]*[14]CountPair
+	// Index 0-9: Data Blocks
+	// Index 10-13: Parity Blocks
+	stripeBlockHeatMap map[int64]*[14]CountPair
 }
 
 func NewAggregator() *Aggregator {
@@ -48,22 +57,89 @@ func NewAggregator() *Aggregator {
 		minuteBufLimit:     240,
 		enableMinuteVolume: true,
 		volMap:             make(map[string]*CountPair),
+		stripeUpdateMap:    make(map[int]int),
+		stripeBlockHeatMap: make(map[int64]*[14]CountPair),
 	}
 }
 
-func (ag *Aggregator) SetMinuteBufLimit(n int) { ag.minuteBufLimit = n }
-func (ag *Aggregator) EnableMinuteVolume(enable bool) { ag.enableMinuteVolume = enable }
+func (ag *Aggregator) SetTargetVolume(vol string)                        { ag.targetVolume = vol }
+func (ag *Aggregator) SetMinuteBufLimit(n int)                           { ag.minuteBufLimit = n }
+func (ag *Aggregator) EnableMinuteVolume(enable bool)                    { ag.enableMinuteVolume = enable }
 func (ag *Aggregator) SetOnEvict(fn func(string, map[string]*CountPair)) { ag.onEvict = fn }
 func (ag *Aggregator) SetTimeRange(from, to *time.Time) {
-	if from != nil { ag.hasStart = true; ag.start = *from } else { ag.hasStart = false }
-	if to != nil { ag.hasEnd = true; ag.end = *to } else { ag.hasEnd = false }
+	if from != nil {
+		ag.hasStart = true
+		ag.start = *from
+	} else {
+		ag.hasStart = false
+	}
+	if to != nil {
+		ag.hasEnd = true
+		ag.end = *to
+	} else {
+		ag.hasEnd = false
+	}
 }
 
-func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
+func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset, size int64) {
 	// normalize ioType to "0" (read) or "1" (write)
 	ioType = normalizeIOType(ioType)
-	if ag.hasStart && ts.Before(ag.start) { return }
-	if ag.hasEnd && ts.After(ag.end) { return }
+	if ag.hasStart && ts.Before(ag.start) {
+		return
+	}
+	if ag.hasEnd && ts.After(ag.end) {
+		return
+	}
+
+	if ag.targetVolume != "" && vol == ag.targetVolume {
+		// Stripe analysis logic
+		const blockSize = 64 * 1024
+		const dataBlocks = 10
+
+		startBlock := offset / blockSize
+		endBlock := (offset + size - 1) / blockSize
+
+		// map[StripeID] -> set of block indices
+		stripesTouched := make(map[int64]map[int]bool)
+
+		for b := startBlock; b <= endBlock; b++ {
+			stripeID := b / dataBlocks
+			blockIdx := int(b % dataBlocks)
+
+			if _, ok := stripesTouched[stripeID]; !ok {
+				stripesTouched[stripeID] = make(map[int]bool)
+			}
+			stripesTouched[stripeID][blockIdx] = true
+		}
+
+		ag.stripeMu.Lock()
+		for stripeID, blocks := range stripesTouched {
+			if ioType == "1" {
+				count := len(blocks)
+				ag.stripeUpdateMap[count]++
+			}
+
+			// Heatmap update
+			// Get or create the counters for this stripe
+			counters, ok := ag.stripeBlockHeatMap[stripeID]
+			if !ok {
+				counters = &[14]CountPair{}
+				ag.stripeBlockHeatMap[stripeID] = counters
+			}
+
+			// Update Blocks (0-14), including data blocks (0-9) and parity blocks (10-13)
+			for blockIdx := range blocks {
+				if blockIdx >= 0 && blockIdx < 14 {
+					if ioType == "0" {
+						counters[blockIdx].Reads++
+					} else {
+						counters[blockIdx].Writes++
+					}
+				}
+			}
+		}
+		ag.stripeMu.Unlock()
+	}
 
 	dayKey := ts.Format("01-02")
 	hourKey := ts.Format("01-02 15")
@@ -127,7 +203,11 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string) {
 			vmin = &CountPair{}
 			mv[vol] = vmin
 		}
-		if ioType == "0" { vmin.Reads++ } else { vmin.Writes++ }
+		if ioType == "0" {
+			vmin.Reads++
+		} else {
+			vmin.Writes++
+		}
 		if ag.minuteBufLimit > 0 && len(ag.minuteOrder) > ag.minuteBufLimit {
 			evictedKey = ag.minuteOrder[0]
 			evictedMap = ag.minuteVolMap[evictedKey]
