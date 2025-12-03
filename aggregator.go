@@ -94,7 +94,7 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 	if ag.targetVolume != "" && vol == ag.targetVolume {
 		// Stripe analysis logic
 		const blockSize = 64 * 1024
-		const dataBlocks = 10
+		const blocks = 10 + 4 // 10 data blocks + 4 parity blocks
 
 		startBlock := offset / blockSize
 		endBlock := (offset + size - 1) / blockSize
@@ -103,8 +103,8 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 		stripesTouched := make(map[int64]map[int]bool)
 
 		for b := startBlock; b <= endBlock; b++ {
-			stripeID := b / dataBlocks
-			blockIdx := int(b % dataBlocks)
+			stripeID := b / blocks
+			blockIdx := int(b % blocks)
 
 			if _, ok := stripesTouched[stripeID]; !ok {
 				stripesTouched[stripeID] = make(map[int]bool)
