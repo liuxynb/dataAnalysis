@@ -9,6 +9,7 @@ QUEUE_SIZE ?=
 MAX_LINE_MB ?=
 MINUTE_BUF ?=
 NO_MINUTE_VOLUME ?=
+TARGET_VOL ?=
 
 .PHONY: help build run exec run-tencent run-alicloud run-msrc fmt vet tidy test clean outclean open
 
@@ -34,6 +35,7 @@ help:
 	@echo "  MAX_LINE_MB        单行最大字节数上限(MB)，默认: 10"
 	@echo "  MINUTE_BUF         分钟级卷统计缓存上限，默认: 120"
 	@echo "  NO_MINUTE_VOLUME   设为 1 禁用分钟卷统计"
+	@echo "  TARGET_VOL         指定统计条带更新的目标 Volume ID"
 	@echo "  注意: 必须设置 DIR（否则 run/exec 会报错）"
 	@echo ""
 	@echo "示例:"
@@ -46,11 +48,11 @@ build:
 
 run:
 	@if [ -z "$(DIR)" ]; then echo "错误: 需要设置 DIR，例如 DIR=/path/to/traces"; exit 1; fi
-	GO111MODULE=on go run . -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,)
+	GO111MODULE=on go run . -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,) $(if $(TARGET_VOL),-target_vol $(TARGET_VOL),)
 
 exec: build
 	@if [ -z "$(DIR)" ]; then echo "错误: 需要设置 DIR，例如 DIR=/path/to/traces"; exit 1; fi
-	"$(BINARY)" -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,)
+	"$(BINARY)" -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,) $(if $(TARGET_VOL),-target_vol $(TARGET_VOL),)
 
 run-tencent:
 	$(MAKE) run PROVIDER=tencent
