@@ -456,3 +456,52 @@ func maxInt64(a, b int64) int64 {
 	}
 	return b
 }
+
+// writeStripeOpsCSV 输出指定卷的详细条带操作日志
+func writeStripeOpsCSV(path string, ag *Aggregator) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+
+	// Header: StripeID,BlockIndex,BlockType,Read/Write, OptionTime
+	if err := w.Write([]string{"StripeID", "BlockIndex", "BlockType", "Read/Write", "OptionTime"}); err != nil {
+		return err
+	}
+
+	ag.stripeMu.Lock()
+	ops := ag.stripeOps
+	// Optional: sort by time. 
+	// Since parsing is parallel, order in slice is not guaranteed to be strictly chronological.
+	sort.Slice(ops, func(i, j int) bool {
+return ops[i].OptionTime.Before(ops[j].OptionTime)
+})
+	
+	// Copy to local variable to release lock quickly? 
+	// Or just hold lock. Since workers are done, contention is zero.
+	
+	for _, op := range ops {
+		row := []string{
+			strconv.FormatInt(op.StripeID, 10),
+			strconv.Itoa(op.BlockIndex),
+			op.BlockType,
+			op.ReadWrite,
+			op.OptionTime.Format("2006-01-02 15:04:05.000000"),
+		}
+		if err := w.Write(row); err != nil {
+			ag.stripeMu.Unlock()
+			return err
+		}
+	}
+	ag.stripeMu.Unlock()
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	fmt.Printf("已写出: %s\n", path)
+	return nil
+}

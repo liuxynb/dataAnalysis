@@ -1,4 +1,9 @@
-BINARY ?= bin/ana
+BINARY_NAME := ana
+BINARY_DIR := bin
+BINARY := $(BINARY_DIR)/$(BINARY_NAME)
+TOOL_BINARY := $(BINARY_DIR)/split_tool
+
+# 默认参数
 PROVIDER ?= tencent
 DIR ?=
 OUT_DIR ?= out_dir
@@ -11,48 +16,130 @@ MINUTE_BUF ?=
 NO_MINUTE_VOLUME ?=
 TARGET_VOL ?=
 
-.PHONY: help build run exec run-tencent run-alicloud run-msrc fmt vet tidy test clean outclean open
+# Go 相关变量
+GOCMD := go
+GOBUILD := $(GOCMD) build
+GOCLEAN := $(GOCMD) clean
+GOTEST := $(GOCMD) test
+GOGET := $(GOCMD) get
+GOFMT := $(GOCMD) fmt
+GOVET := $(GOCMD) vet
+GOTIDY := $(GOCMD) mod tidy
 
+# 平台相关
+PLATFORMS := linux darwin windows
+ARCHS := amd64 arm64
+
+.PHONY: help build build-all build-tool run exec run-tencent run-alicloud run-msrc fmt vet lint tidy test clean outclean open
+
+# 默认目标
 help:
-	@echo "用法:"
-	@echo "  make build                # 构建二进制到 $(BINARY)"
-	@echo "  make run ...              # 使用 go run 直接运行"
-	@echo "  make exec ...             # 使用已构建的二进制运行"
-	@echo "  make run-tencent ...      # 便捷：provider=tencent"
-	@echo "  make run-alicloud ...     # 便捷：provider=alicloud"
-	@echo "  make run-msrc ...         # 便捷：provider=msrc"
-	@echo "  make open                 # 打开输出目录（macOS）"
-	@echo "  make outclean             # 仅清理输出目录"
-	@echo "  make fmt vet tidy test clean"
+	@echo "======================================================================"
+	@echo "Build Targets:"
+	@echo "  make build                构建当前平台二进制到 $(BINARY)"
+	@echo "  make build-tool           构建辅助工具到 $(TOOL_BINARY)"
+	@echo "  make build-all            构建多平台二进制 (Linux/macOS/Windows)"
+	@echo "  make build-linux          构建 Linux 二进制"
+	@echo "  make build-darwin         构建 macOS 二进制"
+	@echo "  make build-windows        构建 Windows 二进制"
 	@echo ""
-	@echo "参数说明:"
-	@echo "  DIR                输入目录，支持 .csv/.gz/.tar.gz（递归）"
-	@echo "  PROVIDER           alicloud|tencent|msrc，默认: $(PROVIDER)"
-	@echo "  OUT_DIR            输出目录，默认: $(OUT_DIR)"
-	@echo "  WORKERS            并发 worker 数，默认: CPU 核心数"
-	@echo "  FROM, TO           统计时间范围（本地时区），格式: YYYY-MM-DD[ HH:MM[:SS]] 或 RFC3339"
-	@echo "  QUEUE_SIZE         读取通道缓冲大小，默认: 10000"
-	@echo "  MAX_LINE_MB        单行最大字节数上限(MB)，默认: 10"
-	@echo "  MINUTE_BUF         分钟级卷统计缓存上限，默认: 120"
-	@echo "  NO_MINUTE_VOLUME   设为 1 禁用分钟卷统计"
-	@echo "  TARGET_VOL         指定统计条带更新的目标 Volume ID"
-	@echo "  注意: 必须设置 DIR（否则 run/exec 会报错）"
+	@echo "Run Targets:"
+	@echo "  make run ...              使用 go run 直接运行"
+	@echo "  make exec ...             使用已构建的二进制运行"
+	@echo "  make run-tencent ...      便捷运行：provider=tencent"
+	@echo "  make run-alicloud ...     便捷运行：provider=alicloud"
+	@echo "  make run-msrc ...         便捷运行：provider=msrc"
 	@echo ""
-	@echo "示例:"
-	@echo "  make run DIR=/data/alicloud PROVIDER=alicloud OUT_DIR=out FROM=\"2025-11-20 10:00\" TO=\"2025-11-20 12:00\""
-	@echo "  make run DIR=/data/tencent  PROVIDER=tencent  OUT_DIR=out WORKERS=8"
+	@echo "Development Targets:"
+	@echo "  make fmt                  格式化代码"
+	@echo "  make vet                  静态检查"
+	@echo "  make lint                 运行 golangci-lint (如果已安装)"
+	@echo "  make tidy                 整理依赖"
+	@echo "  make test                 运行测试"
+	@echo "  make clean                清理构建产物"
+	@echo "  make outclean             清理输出目录"
+	@echo ""
+	@echo "Parameters:"
+	@echo "  DIR                [必须] 输入目录，支持 .csv/.gz/.tar.gz（递归）"
+	@echo "  PROVIDER           [可选] alicloud|tencent|msrc，默认: $(PROVIDER)"
+	@echo "  OUT_DIR            [可选] 输出目录，默认: $(OUT_DIR)"
+	@echo "  WORKERS            [可选] 并发 worker 数，默认: CPU 核心数"
+	@echo "  FROM, TO           [可选] 统计时间范围，格式: YYYY-MM-DD[ HH:MM[:SS]]"
+	@echo "  TARGET_VOL         [可选] 指定统计条带更新的目标 Volume ID"
+	@echo "======================================================================"
+	@echo "Example:"
+	@echo "  make run DIR=./data PROVIDER=tencent TARGET_VOL=vol-12345"
+	@echo "======================================================================"
 
+# 构建主程序
 build:
-	mkdir -p $(dir $(BINARY))
-	GO111MODULE=on go build -o $(BINARY) .
+	@echo "Building $(BINARY_NAME) for local os/arch..."
+	@mkdir -p $(BINARY_DIR)
+	GO111MODULE=on $(GOBUILD) -o $(BINARY) .
 
-run:
-	@if [ -z "$(DIR)" ]; then echo "错误: 需要设置 DIR，例如 DIR=/path/to/traces"; exit 1; fi
-	GO111MODULE=on go run . -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,) $(if $(TARGET_VOL),-target_vol $(TARGET_VOL),)
+# 构建辅助工具
+build-tool:
+	@echo "Building split tool..."
+	@mkdir -p $(BINARY_DIR)
+	GO111MODULE=on $(GOBUILD) -o $(TOOL_BINARY) tool/split_alicloud_csv.go
 
-exec: build
-	@if [ -z "$(DIR)" ]; then echo "错误: 需要设置 DIR，例如 DIR=/path/to/traces"; exit 1; fi
-	"$(BINARY)" -d "$(DIR)" -o "$(OUT_DIR)" $(if $(WORKERS),-w $(WORKERS),) -provider "$(PROVIDER)" $(if $(FROM),-from "$(FROM)",) $(if $(TO),-to "$(TO)",) $(if $(QUEUE_SIZE),-queue_size $(QUEUE_SIZE),) $(if $(MAX_LINE_MB),-max_line_mb $(MAX_LINE_MB),) $(if $(MINUTE_BUF),-minute_buf $(MINUTE_BUF),) $(if $(NO_MINUTE_VOLUME),-no_minute_volume,) $(if $(TARGET_VOL),-target_vol $(TARGET_VOL),)
+# 交叉编译辅助函数
+define build_platform
+	@echo "Building for $(1)/$(2)..."
+	@mkdir -p $(BINARY_DIR)
+	GOOS=$(1) GOARCH=$(2) GO111MODULE=on $(GOBUILD) -o $(BINARY_DIR)/$(BINARY_NAME)-$(1)-$(2)$(3) .
+endef
+
+# 特定平台构建
+build-linux:
+	$(call build_platform,linux,amd64,)
+	$(call build_platform,linux,arm64,)
+
+build-darwin:
+	$(call build_platform,darwin,amd64,)
+	$(call build_platform,darwin,arm64,)
+
+build-windows:
+	$(call build_platform,windows,amd64,.exe)
+
+# 构建所有平台
+build-all: build-linux build-darwin build-windows
+
+# 运行命令
+RUN_ARGS := -d "$(DIR)" -o "$(OUT_DIR)" -provider "$(PROVIDER)"
+ifneq ($(WORKERS),)
+	RUN_ARGS += -w $(WORKERS)
+endif
+ifneq ($(FROM),)
+	RUN_ARGS += -from "$(FROM)"
+endif
+ifneq ($(TO),)
+	RUN_ARGS += -to "$(TO)"
+endif
+ifneq ($(QUEUE_SIZE),)
+	RUN_ARGS += -queue_size $(QUEUE_SIZE)
+endif
+ifneq ($(MAX_LINE_MB),)
+	RUN_ARGS += -max_line_mb $(MAX_LINE_MB)
+endif
+ifneq ($(MINUTE_BUF),)
+	RUN_ARGS += -minute_buf $(MINUTE_BUF)
+endif
+ifneq ($(NO_MINUTE_VOLUME),)
+	RUN_ARGS += -no_minute_volume
+endif
+ifneq ($(TARGET_VOL),)
+	RUN_ARGS += -target_vol "$(TARGET_VOL)"
+endif
+
+check-dir:
+	@if [ -z "$(DIR)" ]; then echo "Error: DIR is required. Usage: make run DIR=/path/to/data"; exit 1; fi
+
+run: check-dir
+	GO111MODULE=on $(GOCMD) run . $(RUN_ARGS)
+
+exec: build check-dir
+	"$(BINARY)" $(RUN_ARGS)
 
 run-tencent:
 	$(MAKE) run PROVIDER=tencent
@@ -63,23 +150,38 @@ run-alicloud:
 run-msrc:
 	$(MAKE) run PROVIDER=msrc
 
+# 开发工具
 fmt:
-	go fmt ./...
+	$(GOFMT) ./...
 
 vet:
-	go vet ./...
+	$(GOVET) ./...
+
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not installed. Skipping."; \
+	fi
 
 tidy:
-	go mod tidy
+	$(GOTIDY)
 
 test:
-	go test ./...
+	$(GOTEST) -v ./...
 
 clean:
-	rm -rf "$(BINARY)" "$(OUT_DIR)"
+	@echo "Cleaning build artifacts..."
+	$(GOCLEAN)
+	rm -rf $(BINARY_DIR)
 
 outclean:
+	@echo "Cleaning output directory..."
 	rm -rf "$(OUT_DIR)"
 
 open:
+ifeq ($(shell uname), Darwin)
 	open "$(OUT_DIR)"
+else
+	@echo "Open command only supported on macOS"
+endif

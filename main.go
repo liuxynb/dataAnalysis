@@ -199,6 +199,13 @@ func main() {
 	if err := writeVolumeCSV(filepath.Join(*outDir, "volume_stats.csv"), agg); err != nil {
 		fmt.Printf("写 volume CSV 失败: %v\n", err)
 	}
+
+	if *targetVol != "" {
+		if err := writeStripeOpsCSV(filepath.Join(*outDir, "stripe_ops.csv"), agg); err != nil {
+			fmt.Printf("写 stripe ops CSV 失败: %v\n", err)
+		}
+	}
+
 	if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
 		fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 	}

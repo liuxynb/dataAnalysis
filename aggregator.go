@@ -11,6 +11,14 @@ type CountPair struct {
 	Writes int64
 }
 
+type StripeOperation struct {
+	StripeID   int64
+	BlockIndex int
+	BlockType  string // "Data" or "Parity"
+	ReadWrite  string // "Read" or "Write"
+	OptionTime time.Time
+}
+
 // 全局统计容器（并发安全通过 mutex）
 type Aggregator struct {
 	dayMu  sync.RWMutex
@@ -45,6 +53,8 @@ type Aggregator struct {
 	// Index 0-9: Data Blocks
 	// Index 10-13: Parity Blocks
 	stripeBlockHeatMap map[int64]*[14]CountPair
+
+	stripeOps []StripeOperation
 }
 
 func NewAggregator() *Aggregator {
@@ -59,6 +69,7 @@ func NewAggregator() *Aggregator {
 		volMap:             make(map[string]*CountPair),
 		stripeUpdateMap:    make(map[int]int),
 		stripeBlockHeatMap: make(map[int64]*[14]CountPair),
+		stripeOps:          make([]StripeOperation, 0),
 	}
 }
 
@@ -135,6 +146,23 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 					} else {
 						counters[blockIdx].Writes++
 					}
+
+					// Record detailed stripe operation
+					bType := "Data"
+					if blockIdx >= 10 {
+						bType = "Parity"
+					}
+					rw := "Read"
+					if ioType == "1" {
+						rw = "Write"
+					}
+					ag.stripeOps = append(ag.stripeOps, StripeOperation{
+						StripeID:   stripeID,
+						BlockIndex: blockIdx,
+						BlockType:  bType,
+						ReadWrite:  rw,
+						OptionTime: ts,
+					})
 				}
 			}
 		}
