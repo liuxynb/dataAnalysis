@@ -4,57 +4,45 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-// writeDayCSV 输出每天统计
-func writeDayCSV(path string, ag *Aggregator) error {
+// Helper: Calculate Read/Write Ratio string
+func calculateRatio(reads, writes int64) string {
+	if reads > 0 {
+		return fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
+	} else if writes > 0 {
+		return "0"
+	}
+	return "N/A"
+}
+
+// Helper: Calculate Read Ratio Percentage string
+func calculateReadRatioPercent(reads, total int64) string {
+	if total > 0 {
+		return fmt.Sprintf("%.2f", 100.0*float64(reads)/float64(total))
+	}
+	return "0"
+}
+
+// Helper: Write generic CSV
+func writeCSV(path string, header []string, rows [][]string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
 
-	// header
-	if err := w.Write([]string{"Date", "Reads", "Writes", "TotalOps", "Read/Write Ratio (read:write)"}); err != nil {
+	w := csv.NewWriter(f)
+	if err := w.Write(header); err != nil {
 		return err
 	}
-
-	ag.dayMu.RLock()
-	keys := make([]string, 0, len(ag.dayMap))
-	for k := range ag.dayMap {
-		keys = append(keys, k)
-	}
-	ag.dayMu.RUnlock()
-
-	sort.Strings(keys)
-	for _, k := range keys {
-		ag.dayMu.RLock()
-		cp := ag.dayMap[k]
-		reads := cp.Reads
-		writes := cp.Writes
-		ag.dayMu.RUnlock()
-		total := reads + writes
-		ratio := "N/A"
-		if reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
-		} else if writes > 0 {
-			ratio = "0"
-		}
-		row := []string{
-			k,
-			strconv.FormatInt(reads, 10),
-			strconv.FormatInt(writes, 10),
-			strconv.FormatInt(total, 10),
-			ratio,
-		}
-		if err := w.Write(row); err != nil {
-			return err
-		}
+	if err := w.WriteAll(rows); err != nil {
+		return err
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
@@ -62,213 +50,168 @@ func writeDayCSV(path string, ag *Aggregator) error {
 	}
 	fmt.Printf("已写出: %s\n", path)
 	return nil
+}
+
+// Generic function to write time-based stats (Day/Hour/Minute)
+func writeTimeStats(path string, statsMap map[string]*CountPair, timeHeader string, mu *sync.RWMutex) error {
+	mu.RLock()
+	keys := make([]string, 0, len(statsMap))
+	for k := range statsMap {
+		keys = append(keys, k)
+	}
+
+	// Snapshot data
+	snapshot := make(map[string]CountPair, len(statsMap))
+	for k, v := range statsMap {
+		snapshot[k] = *v
+	}
+	mu.RUnlock()
+
+	sort.Strings(keys)
+
+	header := []string{timeHeader, "Reads", "Writes", "TotalOps", "Read/Write Ratio (read:write)"}
+	rows := make([][]string, 0, len(keys))
+
+	for _, k := range keys {
+		cp := snapshot[k]
+		total := cp.Reads + cp.Writes
+		rows = append(rows, []string{
+			k,
+			strconv.FormatInt(cp.Reads, 10),
+			strconv.FormatInt(cp.Writes, 10),
+			strconv.FormatInt(total, 10),
+			calculateRatio(cp.Reads, cp.Writes),
+		})
+	}
+	return writeCSV(path, header, rows)
+}
+
+// writeDayCSV 输出每天统计
+func writeDayCSV(path string, ag *Aggregator) error {
+	return writeTimeStats(path, ag.dayMap, "Date", &ag.dayMu)
 }
 
 // writeHourCSV 输出每小时统计
 func writeHourCSV(path string, ag *Aggregator) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	if err := w.Write([]string{"Hour", "Reads", "Writes", "TotalOps", "Read/Write Ratio (read:write)"}); err != nil {
-		return err
-	}
-
-	ag.hourMu.RLock()
-	keys := make([]string, 0, len(ag.hourMap))
-	for k := range ag.hourMap {
-		keys = append(keys, k)
-	}
-	ag.hourMu.RUnlock()
-
-	sort.Strings(keys)
-	for _, k := range keys {
-		ag.hourMu.RLock()
-		cp := ag.hourMap[k]
-		reads := cp.Reads
-		writes := cp.Writes
-		ag.hourMu.RUnlock()
-		total := reads + writes
-		ratio := "N/A"
-		if reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
-		} else if writes > 0 {
-			ratio = "0"
-		}
-		if err := w.Write([]string{
-			k,
-			strconv.FormatInt(reads, 10),
-			strconv.FormatInt(writes, 10),
-			strconv.FormatInt(total, 10),
-			ratio,
-		}); err != nil {
-			return err
-		}
-	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return err
-	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+	return writeTimeStats(path, ag.hourMap, "Hour", &ag.hourMu)
 }
 
+// writeMinuteCSV 输出每分钟统计
 func writeMinuteCSV(path string, ag *Aggregator) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	if err := w.Write([]string{"Minute", "Reads", "Writes", "TotalOps", "Read/Write Ratio (read:write)"}); err != nil {
-		return err
-	}
-
-	ag.minuteMu.RLock()
-	keys := make([]string, 0, len(ag.minuteMap))
-	for k := range ag.minuteMap {
-		keys = append(keys, k)
-	}
-	ag.minuteMu.RUnlock()
-
-	sort.Strings(keys)
-	for _, k := range keys {
-		ag.minuteMu.RLock()
-		cp := ag.minuteMap[k]
-		reads := cp.Reads
-		writes := cp.Writes
-		ag.minuteMu.RUnlock()
-		total := reads + writes
-		ratio := "N/A"
-		if reads > 0 {
-			ratio = fmt.Sprintf("1:%.2f", float64(writes)/float64(reads))
-		} else if writes > 0 {
-			ratio = "0"
-		}
-		if err := w.Write([]string{
-			k,
-			strconv.FormatInt(reads, 10),
-			strconv.FormatInt(writes, 10),
-			strconv.FormatInt(total, 10),
-			ratio,
-		}); err != nil {
-			return err
-		}
-	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return err
-	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+	return writeTimeStats(path, ag.minuteMap, "Minute", &ag.minuteMu)
 }
 
-// writeVolumeCSV 输出每个卷的统计（按总操作数降序）
-func writeVolumeCSV(path string, ag *Aggregator) error {
-	type vrow struct {
-		vid    string
-		reads  int64
-		writes int64
-		total  int64
-	}
-	ag.volMu.RLock()
-	rows := make([]vrow, 0, len(ag.volMap))
-	for vid, cp := range ag.volMap {
-		rows = append(rows, vrow{
-			vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes,
-		})
-	}
-	ag.volMu.RUnlock()
+// Helper for volume rows generation
+type volRow struct {
+	vid                  string
+	reads, writes, total int64
+}
 
-	// sort by total desc
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].total > rows[j].total
-	})
+func generateVolumeRows(mv map[string]*CountPair) []volRow {
+	rows := make([]volRow, 0, len(mv))
+	for vid, cp := range mv {
+		rows = append(rows, volRow{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].total > rows[j].total })
+	return rows
+}
 
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-	if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil {
-		return err
-	}
-	for _, r := range rows {
-		ratio := "0"
-		if r.total > 0 {
-			ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total))
-		}
-		if err := w.Write([]string{
+func formatVolumeRows(vRows []volRow) [][]string {
+	rows := make([][]string, len(vRows))
+	for i, r := range vRows {
+		rows[i] = []string{
 			r.vid,
 			strconv.FormatInt(r.reads, 10),
 			strconv.FormatInt(r.writes, 10),
 			strconv.FormatInt(r.total, 10),
-			ratio,
-		}); err != nil {
-			return err
+			calculateReadRatioPercent(r.reads, r.total),
 		}
 	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return err
-	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+	return rows
 }
 
-func writeMinuteVolumeCSV(dir string, minuteKey string, mv map[string]*CountPair) error {
+// writeVolumeCSV 输出每个卷的统计（按总操作数降序）
+func writeVolumeCSV(path string, ag *Aggregator) error {
+	ag.volMu.RLock()
+	// Create a snapshot
+	snapshot := make(map[string]*CountPair, len(ag.volMap))
+	for k, v := range ag.volMap {
+		snapshot[k] = &CountPair{Reads: v.Reads, Writes: v.Writes}
+	}
+	ag.volMu.RUnlock()
+
+	vRows := generateVolumeRows(snapshot)
+	header := []string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}
+	return writeCSV(path, header, formatVolumeRows(vRows))
+}
+
+func readVolumeStatsCSV(path string) (map[string]*CountPair, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	// Skip header
+	if _, err := r.Read(); err != nil {
+		return nil, nil // Empty file or header only
+	}
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]*CountPair)
+	for _, row := range records {
+		if len(row) < 3 {
+			continue
+		}
+		vid := row[0]
+		reads, _ := strconv.ParseInt(row[1], 10, 64)
+		writes, _ := strconv.ParseInt(row[2], 10, 64)
+		res[vid] = &CountPair{Reads: reads, Writes: writes}
+	}
+	return res, nil
+}
+
+func writeMinuteVolumeCSV(dir string, minuteKey string, mv map[string]*CountPair, merge bool) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	type v struct {
-		vid                  string
-		reads, writes, total int64
-	}
-	rows := make([]v, 0, len(mv))
-	for vid, cp := range mv {
-		rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].total > rows[j].total })
+
 	name := strings.ReplaceAll(strings.ReplaceAll(minuteKey, ":", "-"), " ", "_")
-	fp := dir + "/volume_" + name + ".csv"
-	f, err := os.Create(fp)
-	if err != nil {
-		return err
-	}
-	w := csv.NewWriter(f)
-	if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil {
-		f.Close()
-		return err
-	}
-	for _, r := range rows {
-		ratio := "0"
-		if r.total > 0 {
-			ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total))
-		}
-		if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads, 10), strconv.FormatInt(r.writes, 10), strconv.FormatInt(r.total, 10), ratio}); err != nil {
-			f.Close()
-			return err
+	fp := filepath.Join(dir, "volume_"+name+".csv")
+
+	data := make(map[string]*CountPair)
+
+	// If merge is enabled, try to load existing data
+	if merge {
+		if _, err := os.Stat(fp); err == nil {
+			existing, err := readVolumeStatsCSV(fp)
+			if err != nil {
+				fmt.Printf("Warning: failed to read existing CSV %s: %v\n", fp, err)
+			} else if existing != nil {
+				data = existing
+			}
 		}
 	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		f.Close()
-		return err
+
+	// Merge new data
+	for vid, cp := range mv {
+		if _, ok := data[vid]; !ok {
+			data[vid] = &CountPair{}
+		}
+		data[vid].Reads += cp.Reads
+		data[vid].Writes += cp.Writes
 	}
-	f.Close()
-	fmt.Printf("已写出: %s\n", fp)
-	return nil
+
+	vRows := generateVolumeRows(data)
+	header := []string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}
+	return writeCSV(fp, header, formatVolumeRows(vRows))
 }
 
-func writeVolumeByMinuteDir(dir string, ag *Aggregator) error {
+func writeVolumeByMinuteDir(dir string, ag *Aggregator, merge bool) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -277,78 +220,46 @@ func writeVolumeByMinuteDir(dir string, ag *Aggregator) error {
 	for k := range ag.minuteVolMap {
 		keys = append(keys, k)
 	}
-	ag.minuteVolMu.RUnlock()
-	sort.Strings(keys)
+
+	snapshot := make(map[string]map[string]*CountPair)
 	for _, k := range keys {
-		ag.minuteVolMu.RLock()
-		mv := ag.minuteVolMap[k]
-		ag.minuteVolMu.RUnlock()
-		type v struct {
-			vid                  string
-			reads, writes, total int64
+		srcMv := ag.minuteVolMap[k]
+		dstMv := make(map[string]*CountPair, len(srcMv))
+		for vol, cp := range srcMv {
+			dstMv[vol] = &CountPair{Reads: cp.Reads, Writes: cp.Writes}
 		}
-		rows := make([]v, 0, len(mv))
-		for vid, cp := range mv {
-			rows = append(rows, v{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
-		}
-		sort.Slice(rows, func(i, j int) bool { return rows[i].total > rows[j].total })
-		name := strings.ReplaceAll(strings.ReplaceAll(k, ":", "-"), " ", "_")
-		fp := dir + "/volume_" + name + ".csv"
-		f, err := os.Create(fp)
-		if err != nil {
+		snapshot[k] = dstMv
+	}
+	ag.minuteVolMu.RUnlock()
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		mv := snapshot[k]
+		if err := writeMinuteVolumeCSV(dir, k, mv, merge); err != nil {
 			return err
 		}
-		w := csv.NewWriter(f)
-		if err := w.Write([]string{"VolumeID", "Reads", "Writes", "TotalOps", "ReadRatio(%)"}); err != nil {
-			f.Close()
-			return err
-		}
-		for _, r := range rows {
-			ratio := "0"
-			if r.total > 0 {
-				ratio = fmt.Sprintf("%.2f", 100.0*float64(r.reads)/float64(r.total))
-			}
-			if err := w.Write([]string{r.vid, strconv.FormatInt(r.reads, 10), strconv.FormatInt(r.writes, 10), strconv.FormatInt(r.total, 10), ratio}); err != nil {
-				f.Close()
-				return err
-			}
-		}
-		w.Flush()
-		if err := w.Error(); err != nil {
-			f.Close()
-			return err
-		}
-		f.Close()
-		fmt.Printf("已写出: %s\n", fp)
 	}
 	return nil
 }
 
 func printTopVolumes(ag *Aggregator, top int) {
-	type vrow struct {
-		vid    string
-		reads  int64
-		writes int64
-		total  int64
-	}
 	ag.volMu.RLock()
-	rows := make([]vrow, 0, len(ag.volMap))
-	for vid, cp := range ag.volMap {
-		rows = append(rows, vrow{vid: vid, reads: cp.Reads, writes: cp.Writes, total: cp.Reads + cp.Writes})
+	snapshot := make(map[string]*CountPair, len(ag.volMap))
+	for k, v := range ag.volMap {
+		snapshot[k] = &CountPair{Reads: v.Reads, Writes: v.Writes}
 	}
 	ag.volMu.RUnlock()
 
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].total > rows[j].total
-	})
+	vRows := generateVolumeRows(snapshot)
 
 	n := top
-	if len(rows) < n {
-		n = len(rows)
+	if len(vRows) < n {
+		n = len(vRows)
 	}
 	fmt.Printf("Top %d Volumes (by total ops):\n", n)
 	for i := 0; i < n; i++ {
-		r := rows[i]
+		r := vRows[i]
 		readRatio := 100.0 * float64(r.reads) / float64(maxInt64(1, r.total))
 		fmt.Printf("%2d) Volume %s: Reads=%d Writes=%d Total=%d ReadRatio=%.2f%%\n",
 			i+1, r.vid, r.reads, r.writes, r.total, readRatio)
@@ -356,74 +267,45 @@ func printTopVolumes(ag *Aggregator, top int) {
 }
 
 func writeStripeStats(path string, ag *Aggregator) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	if err := w.Write([]string{"UpdatedBlocksInStripe", "Count"}); err != nil {
-		return err
-	}
-
 	ag.stripeMu.Lock()
-	// Sort keys
 	keys := make([]int, 0, len(ag.stripeUpdateMap))
 	for k := range ag.stripeUpdateMap {
 		keys = append(keys, k)
+	}
+	// Copy map data
+	statsCopy := make(map[int]int, len(ag.stripeUpdateMap))
+	for k, v := range ag.stripeUpdateMap {
+		statsCopy[k] = v
 	}
 	ag.stripeMu.Unlock()
 
 	sort.Ints(keys)
 
-	ag.stripeMu.Lock()
-	defer ag.stripeMu.Unlock()
-
-	for _, k := range keys {
-		count := ag.stripeUpdateMap[k]
-		if err := w.Write([]string{
-			strconv.Itoa(k),
-			strconv.Itoa(count),
-		}); err != nil {
-			return err
-		}
+	header := []string{"UpdatedBlocksInStripe", "Count"}
+	rows := make([][]string, len(keys))
+	for i, k := range keys {
+		rows[i] = []string{strconv.Itoa(k), strconv.Itoa(statsCopy[k])}
 	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+	return writeCSV(path, header, rows)
 }
 
 func writeStripeHeatMap(path string, ag *Aggregator) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	if err := w.Write([]string{"StripeID", "BlockIndex", "BlockType", "Reads", "Writes", "TotalOps"}); err != nil {
-		return err
-	}
-
 	ag.stripeMu.Lock()
-	// Sort stripe IDs for deterministic output
 	stripeIDs := make([]int64, 0, len(ag.stripeBlockHeatMap))
-	for k := range ag.stripeBlockHeatMap {
+
+	// Deep copy needed
+	dataCopy := make(map[int64][14]CountPair, len(ag.stripeBlockHeatMap))
+	for k, v := range ag.stripeBlockHeatMap {
 		stripeIDs = append(stripeIDs, k)
+		dataCopy[k] = *v // copy array value
 	}
 	ag.stripeMu.Unlock()
 
-	// sort.Slice is not efficient for int64, use custom wrapper or just simple bubble/insertion if small, 
-	// but for millions use standard sort with interface or Slice
 	sort.Slice(stripeIDs, func(i, j int) bool { return stripeIDs[i] < stripeIDs[j] })
 
-	ag.stripeMu.Lock()
-	defer ag.stripeMu.Unlock()
-
+	var rows [][]string
 	for _, sid := range stripeIDs {
-		counters := ag.stripeBlockHeatMap[sid]
+		counters := dataCopy[sid]
 		for idx := 0; idx < 14; idx++ {
 			reads := counters[idx].Reads
 			writes := counters[idx].Writes
@@ -434,20 +316,19 @@ func writeStripeHeatMap(path string, ag *Aggregator) error {
 			if idx >= 10 {
 				blockType = "Parity"
 			}
-			if err := w.Write([]string{
+			rows = append(rows, []string{
 				strconv.FormatInt(sid, 10),
 				strconv.Itoa(idx),
 				blockType,
 				strconv.FormatInt(reads, 10),
 				strconv.FormatInt(writes, 10),
 				strconv.FormatInt(reads+writes, 10),
-			}); err != nil {
-				return err
-			}
+			})
 		}
 	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+
+	header := []string{"StripeID", "BlockIndex", "BlockType", "Reads", "Writes", "TotalOps"}
+	return writeCSV(path, header, rows)
 }
 
 func maxInt64(a, b int64) int64 {
@@ -459,49 +340,26 @@ func maxInt64(a, b int64) int64 {
 
 // writeStripeOpsCSV 输出指定卷的详细条带操作日志
 func writeStripeOpsCSV(path string, ag *Aggregator) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	// Header: StripeID,BlockIndex,BlockType,Read/Write, OptionTime
-	if err := w.Write([]string{"StripeID", "BlockIndex", "BlockType", "Read/Write", "OptionTime"}); err != nil {
-		return err
-	}
-
 	ag.stripeMu.Lock()
-	ops := ag.stripeOps
-	// Optional: sort by time. 
-	// Since parsing is parallel, order in slice is not guaranteed to be strictly chronological.
+	// Copy slice
+	ops := make([]StripeOperation, len(ag.stripeOps))
+	copy(ops, ag.stripeOps)
+	ag.stripeMu.Unlock()
+
 	sort.Slice(ops, func(i, j int) bool {
-return ops[i].OptionTime.Before(ops[j].OptionTime)
-})
-	
-	// Copy to local variable to release lock quickly? 
-	// Or just hold lock. Since workers are done, contention is zero.
-	
-	for _, op := range ops {
-		row := []string{
+		return ops[i].OptionTime.Before(ops[j].OptionTime)
+	})
+
+	header := []string{"StripeID", "BlockIndex", "BlockType", "Read/Write", "OptionTime"}
+	rows := make([][]string, len(ops))
+	for i, op := range ops {
+		rows[i] = []string{
 			strconv.FormatInt(op.StripeID, 10),
 			strconv.Itoa(op.BlockIndex),
 			op.BlockType,
 			op.ReadWrite,
 			op.OptionTime.Format("2006-01-02 15:04:05.000000"),
 		}
-		if err := w.Write(row); err != nil {
-			ag.stripeMu.Unlock()
-			return err
-		}
 	}
-	ag.stripeMu.Unlock()
-
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return err
-	}
-	fmt.Printf("已写出: %s\n", path)
-	return nil
+	return writeCSV(path, header, rows)
 }

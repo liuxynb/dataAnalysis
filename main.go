@@ -121,7 +121,7 @@ func main() {
 	agg.EnableMinuteVolume(!*disableMinuteVol)
 	agg.SetTargetVolume(*targetVol)
 	agg.SetOnEvict(func(minKey string, mv map[string]*CountPair) {
-		if err := writeMinuteVolumeCSV(filepath.Join(*outDir, "volume_stats_minute"), minKey, mv); err != nil {
+		if err := writeMinuteVolumeCSV(filepath.Join(*outDir, "volume_stats_minute"), minKey, mv, *targetVol == ""); err != nil {
 			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 		}
 	})
@@ -206,7 +206,7 @@ func main() {
 		}
 	}
 
-	if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg); err != nil {
+	if err := writeVolumeByMinuteDir(filepath.Join(*outDir, "volume_stats_minute"), agg, *targetVol == ""); err != nil {
 		fmt.Printf("写 volume-by-minute 失败: %v\n", err)
 	}
 
