@@ -79,19 +79,15 @@ for dataset_info in "${DATASETS[@]}"; do
             echo "  [Running] EC: $EC_LABEL, BlockSize: $size_label ($SIZE_BYTES bytes)"
             echo "    -> Output: $OUT_DIR"
 
+             # 构造命令字符串
+            CMD="./bin/ana -d \"$DIR\" -provider \"$PROVIDER\" -from \"$FROM\" -to \"$TO\" -target_vol \"$VOL_ID\" -data_blocks \"$DATA_BLOCKS\" -parity_blocks \"$PARITY_BLOCKS\" -stripe_block_size \"$SIZE_BYTES\" -o \"$OUT_DIR\""
+            
+            # 打印实际执行的命令
+            echo "    -> Executing: $CMD"
+
             # 执行命令
-            # 注意：使用 ./bin/ana 而不是 make run 以避免重复编译和参数传递问题
-            ./bin/ana \
-                -d "$DIR" \
-                -provider "$PROVIDER" \
-                -from "$FROM" \
-                -to "$TO" \
-                -target_vol "$VOL_ID" \
-                -data_blocks "$DATA_BLOCKS" \
-                -parity_blocks "$PARITY_BLOCKS" \
-                -stripe_block_size "$SIZE_BYTES" \
-                -o "$OUT_DIR" \
-                > "${OUT_DIR}/analysis.log" 2>&1
+            # 注意：使用 eval 执行构造的命令字符串，以正确处理引号
+            eval "$CMD > \"${OUT_DIR}/analysis.log\" 2>&1"
 
             if [ $? -eq 0 ]; then
                 echo "    [Success]"
