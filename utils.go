@@ -294,11 +294,19 @@ func writeStripeHeatMap(path string, ag *Aggregator) error {
 	stripeIDs := make([]int64, 0, len(ag.stripeBlockHeatMap))
 
 	// Deep copy needed
-	dataCopy := make(map[int64][14]CountPair, len(ag.stripeBlockHeatMap))
+	dataCopy := make(map[int64][]CountPair, len(ag.stripeBlockHeatMap))
 	for k, v := range ag.stripeBlockHeatMap {
 		stripeIDs = append(stripeIDs, k)
-		dataCopy[k] = *v // copy array value
+		// Deep copy the slice
+		newSlice := make([]CountPair, len(v))
+		copy(newSlice, v)
+		dataCopy[k] = newSlice
 	}
+
+	// Capture config under lock
+	dBlocks := ag.dataBlocks
+	// pBlocks := ag.parityBlocks // not strictly needed for logic if we iterate all
+
 	ag.stripeMu.Unlock()
 
 	sort.Slice(stripeIDs, func(i, j int) bool { return stripeIDs[i] < stripeIDs[j] })
@@ -306,14 +314,14 @@ func writeStripeHeatMap(path string, ag *Aggregator) error {
 	var rows [][]string
 	for _, sid := range stripeIDs {
 		counters := dataCopy[sid]
-		for idx := 0; idx < 14; idx++ {
+		for idx := 0; idx < len(counters); idx++ {
 			reads := counters[idx].Reads
 			writes := counters[idx].Writes
 			if reads == 0 && writes == 0 {
 				continue
 			}
 			blockType := "Data"
-			if idx >= 10 {
+			if idx >= dBlocks {
 				blockType = "Parity"
 			}
 			rows = append(rows, []string{

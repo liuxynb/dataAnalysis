@@ -15,6 +15,9 @@ MAX_LINE_MB ?=
 MINUTE_BUF ?=
 NO_MINUTE_VOLUME ?=
 TARGET_VOL ?=
+STRIPE_BLOCK_SIZE ?=
+DATA_BLOCKS ?=
+PARITY_BLOCKS ?=
 
 # Go 相关变量
 GOCMD := go
@@ -66,6 +69,9 @@ help:
 	@echo "  WORKERS            [可选] 并发 worker 数，默认: CPU 核心数"
 	@echo "  FROM, TO           [可选] 统计时间范围，格式: YYYY-MM-DD[ HH:MM[:SS]]"
 	@echo "  TARGET_VOL         [可选] 指定统计条带更新的目标 Volume ID"
+	@echo "  STRIPE_BLOCK_SIZE  [可选] Stripe block size (bytes), 默认 65536"
+	@echo "  DATA_BLOCKS        [可选] Data blocks count, 默认 10"
+	@echo "  PARITY_BLOCKS      [可选] Parity blocks count, 默认 4"
 	@echo "======================================================================"
 	@echo "Example:"
 	@echo "  make run DIR=./data PROVIDER=tencent TARGET_VOL=vol-12345"
@@ -130,6 +136,15 @@ ifneq ($(NO_MINUTE_VOLUME),)
 endif
 ifneq ($(TARGET_VOL),)
 	RUN_ARGS += -target_vol "$(TARGET_VOL)"
+endif
+ifneq ($(STRIPE_BLOCK_SIZE),)
+	RUN_ARGS += -stripe_block_size $(STRIPE_BLOCK_SIZE)
+endif
+ifneq ($(DATA_BLOCKS),)
+	RUN_ARGS += -data_blocks $(DATA_BLOCKS)
+endif
+ifneq ($(PARITY_BLOCKS),)
+	RUN_ARGS += -parity_blocks $(PARITY_BLOCKS)
 endif
 
 check-dir:

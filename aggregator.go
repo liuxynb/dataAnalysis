@@ -49,10 +49,13 @@ type Aggregator struct {
 	targetVolume    string
 	stripeUpdateMap map[int]int // Key: Number of blocks updated (1-10), Value: Count
 
-	// map[StripeID]*[14]CountPair
-	// Index 0-9: Data Blocks
-	// Index 10-13: Parity Blocks
-	stripeBlockHeatMap map[int64]*[14]CountPair
+	// map[StripeID][]CountPair
+	// Index 0-(DataBlocks-1): Data Blocks
+	// Index DataBlocks-(TotalBlocks-1): Parity Blocks
+	stripeBlockHeatMap map[int64][]CountPair
+	blockSize          int64
+	dataBlocks         int
+	parityBlocks       int
 
 	stripeOps []StripeOperation
 }
@@ -68,8 +71,11 @@ func NewAggregator() *Aggregator {
 		enableMinuteVolume: true,
 		volMap:             make(map[string]*CountPair),
 		stripeUpdateMap:    make(map[int]int),
-		stripeBlockHeatMap: make(map[int64]*[14]CountPair),
+		stripeBlockHeatMap: make(map[int64][]CountPair),
 		stripeOps:          make([]StripeOperation, 0),
+		blockSize:          64 * 1024,
+		dataBlocks:         10,
+		parityBlocks:       4,
 	}
 }
 
@@ -77,6 +83,17 @@ func (ag *Aggregator) SetTargetVolume(vol string)                        { ag.ta
 func (ag *Aggregator) SetMinuteBufLimit(n int)                           { ag.minuteBufLimit = n }
 func (ag *Aggregator) EnableMinuteVolume(enable bool)                    { ag.enableMinuteVolume = enable }
 func (ag *Aggregator) SetOnEvict(fn func(string, map[string]*CountPair)) { ag.onEvict = fn }
+func (ag *Aggregator) SetStripeConfig(blockSize int64, dataBlocks, parityBlocks int) {
+	if blockSize > 0 {
+		ag.blockSize = blockSize
+	}
+	if dataBlocks > 0 {
+		ag.dataBlocks = dataBlocks
+	}
+	if parityBlocks >= 0 {
+		ag.parityBlocks = parityBlocks
+	}
+}
 func (ag *Aggregator) SetTimeRange(from, to *time.Time) {
 	if from != nil {
 		ag.hasStart = true
@@ -104,18 +121,17 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 
 	if ag.targetVolume != "" && vol == ag.targetVolume {
 		// Stripe analysis logic
-		const blockSize = 64 * 1024
-		const blocks = 10 + 4 // 10 data blocks + 4 parity blocks
+		totalBlocks := int64(ag.dataBlocks + ag.parityBlocks)
 
-		startBlock := offset / blockSize
-		endBlock := (offset + size - 1) / blockSize
+		startBlock := offset / ag.blockSize
+		endBlock := (offset + size - 1) / ag.blockSize
 
 		// map[StripeID] -> set of block indices
 		stripesTouched := make(map[int64]map[int]bool)
 
 		for b := startBlock; b <= endBlock; b++ {
-			stripeID := b / blocks
-			blockIdx := int(b % blocks)
+			stripeID := b / totalBlocks
+			blockIdx := int(b % totalBlocks)
 
 			if _, ok := stripesTouched[stripeID]; !ok {
 				stripesTouched[stripeID] = make(map[int]bool)
@@ -124,9 +140,9 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 		}
 
 		ag.stripeMu.Lock()
-		for stripeID, blocks := range stripesTouched {
+		for stripeID, touchedBlocks := range stripesTouched {
 			if ioType == "1" {
-				count := len(blocks)
+				count := len(touchedBlocks)
 				ag.stripeUpdateMap[count]++
 			}
 
@@ -134,13 +150,13 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 			// Get or create the counters for this stripe
 			counters, ok := ag.stripeBlockHeatMap[stripeID]
 			if !ok {
-				counters = &[14]CountPair{}
+				counters = make([]CountPair, int(totalBlocks))
 				ag.stripeBlockHeatMap[stripeID] = counters
 			}
 
-			// Update Blocks (0-14), including data blocks (0-9) and parity blocks (10-13)
-			for blockIdx := range blocks {
-				if blockIdx >= 0 && blockIdx < 14 {
+			// Update Blocks
+			for blockIdx := range touchedBlocks {
+				if blockIdx >= 0 && blockIdx < int(totalBlocks) {
 					if ioType == "0" {
 						counters[blockIdx].Reads++
 					} else {
@@ -149,7 +165,7 @@ func (ag *Aggregator) addRecord(ts time.Time, ioType string, vol string, offset,
 
 					// Record detailed stripe operation
 					bType := "Data"
-					if blockIdx >= 10 {
+					if blockIdx >= ag.dataBlocks {
 						bType = "Parity"
 					}
 					rw := "Read"

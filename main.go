@@ -64,6 +64,9 @@ func main() {
 	from := flag.String("from", "", "起始时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
 	to := flag.String("to", "", "结束时间，格式: 2006-01-02[ 15:04[:05]] 或 RFC3339")
 	targetVol := flag.String("target_vol", "", "指定统计条带更新的目标 Volume ID")
+	stripeBlockSize := flag.Int64("stripe_block_size", 65536, "Stripe block size in bytes (default: 65536)")
+	dataBlocks := flag.Int("data_blocks", 10, "Number of data blocks in a stripe (default: 10)")
+	parityBlocks := flag.Int("parity_blocks", 4, "Number of parity blocks in a stripe (default: 4)")
 	flag.Parse()
 	SetMaxLineBytes(*maxLineMB * 1024 * 1024)
 
@@ -120,6 +123,7 @@ func main() {
 	agg.SetMinuteBufLimit(*minuteBuf)
 	agg.EnableMinuteVolume(!*disableMinuteVol)
 	agg.SetTargetVolume(*targetVol)
+	agg.SetStripeConfig(*stripeBlockSize, *dataBlocks, *parityBlocks)
 	agg.SetOnEvict(func(minKey string, mv map[string]*CountPair) {
 		if err := writeMinuteVolumeCSV(filepath.Join(*outDir, "volume_stats_minute"), minKey, mv, *targetVol == ""); err != nil {
 			fmt.Printf("写 volume-by-minute 失败: %v\n", err)
